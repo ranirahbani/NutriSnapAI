@@ -1,0 +1,10 @@
+gradio
+torch
+torchvision
+transformers
+pillow
+pandas
+matplotlib
+plotly
+ultralytics
+opencv-python-headless

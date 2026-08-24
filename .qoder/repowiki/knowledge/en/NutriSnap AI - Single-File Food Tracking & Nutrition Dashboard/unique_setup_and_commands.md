@@ -1,0 +1,1 @@
+Run directly with `python app.py`; the script downloads `yolov8n.pt` and the HuggingFace model on first run. The app writes a local `meal_log.csv` that persists between sessions and is auto-migrated if columns change.

@@ -1,0 +1,1 @@
+Gradio for the web UI, Ultralytics YOLOv8 (`yolov8n.pt`) for multi-object food detection, Hugging Face `yvelos/beit-food-384` as a fallback image classifier, OpenCV for image I/O and annotation, pandas + matplotlib + plotly for CSV parsing and dashboard charts, and Pillow for image handling.

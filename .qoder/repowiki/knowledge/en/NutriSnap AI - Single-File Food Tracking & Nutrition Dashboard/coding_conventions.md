@@ -1,0 +1,5 @@
+- Optional heavy dependencies are imported inside try/except blocks within dedicated loader functions so the app degrades gracefully when models cannot be loaded.
+- Each detected food entry is normalized by lowercasing and replacing spaces with underscores before looking it up in the `NUTRITION_DB` key.
+- All user-facing logging uses a consistent `[NutriSnap] ...` prefix printed to stdout for model load, detection errors, and startup messages.
+- CSV persistence is guarded by an `ensure_csv()` helper that creates the file with `CSV_COLUMNS` headers on first write, and read functions auto-fill missing columns for schema migration.
+- Dashboard rendering converts every numeric column via `pd.to_numeric(..., errors='coerce').fillna(0)` before aggregation to tolerate malformed CSV rows.

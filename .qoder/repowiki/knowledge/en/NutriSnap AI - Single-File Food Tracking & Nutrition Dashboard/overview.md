@@ -1,0 +1,1 @@
+A single-file Gradio web app that analyzes meal photos via YOLOv8 (with HuggingFace fallback) to estimate nutrition, log meals to CSV, and render interactive dashboard charts.

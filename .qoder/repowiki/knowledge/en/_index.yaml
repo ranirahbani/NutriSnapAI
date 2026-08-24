@@ -1,0 +1,17 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: en-US
+branch: Q0DeR-MaG1C-BrAnCh-Fo2-NoN-GiT-Or-No-C0MmIt
+nodes_managed: true
+exported_at: "2026-08-24T14:52:31Z"
+modules:
+    "":
+        dir_name: NutriSnap AI - Single-File Food Tracking & Nutrition Dashboard
+        title: NutriSnap AI - Single-File Food Tracking & Nutrition Dashboard
+        scope:
+            - app.py
+            - requirements.txt
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
