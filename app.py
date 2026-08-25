@@ -568,7 +568,7 @@ def analyze_image(image_path, status_callback=None):
             detections = hf_results
 
     if not detections:
-        return None, "No food items detected. Try a clearer photo of a meal.", None
+        return None, "No food items detected. Try a clearer photo of a meal.", None, []
 
     # Step 3: Calculate nutrition and portions
     if status_callback:
@@ -604,6 +604,20 @@ def analyze_image(image_path, status_callback=None):
     annotated = draw_annotations(img_bgr, results)
     annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
 
+    # Step 4b: Crop each detected food item as individual thumbnail
+    cropped_thumbnails = []
+    for det in results:
+        x1, y1, x2, y2 = det["bbox"]
+        # Clamp coordinates to image bounds
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(img_np.shape[1], x2), min(img_np.shape[0], y2)
+        if x2 > x1 and y2 > y1:
+            crop = img_np[y1:y2, x1:x2].copy()
+            # Resize to a consistent thumbnail size (200x200)
+            crop_resized = cv2.resize(crop, (200, 200), interpolation=cv2.INTER_CUBIC)
+            label = det["food"].replace("_", " ").title()
+            cropped_thumbnails.append((crop_resized, label))
+
     # Step 5: Build summary markdown
     summary_lines = [f"### Detected {len(results)} food item(s)\n"]
     summary_lines.append("| Food | Portion | Grams | Calories | Protein | Carbs | Fat |")
@@ -624,7 +638,7 @@ def analyze_image(image_path, status_callback=None):
         for msg in status_messages:
             summary_lines.append(f"  \n{msg}")
 
-    return annotated_rgb, "\n".join(summary_lines), results
+    return annotated_rgb, "\n".join(summary_lines), results, cropped_thumbnails
 
 
 # ============================================
@@ -671,10 +685,10 @@ def build_dashboard():
     fig_weekly.update_layout(template="plotly_white", height=350)
 
     # 4. Top foods eaten
-    top = df["Food"].value_counts().head(8).reset_index()
+    top = df["Food"].value_counts().head(5).reset_index()
     top.columns = ["Food", "Count"]
     fig_top = px.bar(top, y="Food", x="Count", orientation="h",
-                     title="Top Foods Eaten",
+                     title="Top 5 Foods Eaten",
                      color_discrete_sequence=[THEME_ACCENT])
     fig_top.update_layout(template="plotly_white", height=350, yaxis={"categoryorder": "total ascending"})
 
@@ -746,18 +760,88 @@ footer { display: none; }
     border-bottom: 2px solid #E8F5E9;
     padding-bottom: 8px;
 }
-.dark-mode {
+
+/* Live dark mode toggle styles */
+body.dark-mode,
+body.dark-mode .gradio-container {
     background-color: #1a1a2e !important;
     color: #e0e0e0 !important;
 }
-.dark-mode .settings-section,
-.dark-mode .card {
-    background: #16213e !important;
+body.dark-mode .gr-block,
+body.dark-mode .gr-form,
+body.dark-mode .gr-box,
+body.dark-mode .settings-section,
+body.dark-mode .card {
+    background-color: #16213e !important;
     color: #e0e0e0 !important;
 }
-.dark-mode .status-box {
+body.dark-mode .status-box {
     background: #1a2e1a !important;
     color: #c0e0c0 !important;
+}
+body.dark-mode .gr-input,
+body.dark-mode .gr-text-input,
+body.dark-mode .gr-textbox textarea {
+    background-color: #0f3460 !important;
+    color: #e0e0e0 !important;
+    border-color: #2C7A4A !important;
+}
+body.dark-mode .gr-button {
+    border-color: #2C7A4A !important;
+}
+body.dark-mode .gr-markdown {
+    color: #e0e0e0 !important;
+}
+body.dark-mode table {
+    color: #e0e0e0 !important;
+}
+
+/* Loading spinner */
+.analysis-spinner {
+    display: none;
+    text-align: center;
+    padding: 24px;
+    margin: 12px 0;
+    background: linear-gradient(135deg, #f0f7f4, #e8f5e9);
+    border-radius: 12px;
+    border: 2px solid #2C7A4A;
+}
+.analysis-spinner.active {
+    display: block;
+}
+.analysis-spinner .spinner-icon {
+    font-size: 2em;
+    animation: spin-pulse 1.2s ease-in-out infinite;
+}
+.analysis-spinner .spinner-text {
+    font-size: 1.1em;
+    color: #2C7A4A;
+    font-weight: 600;
+    margin-top: 8px;
+}
+@keyframes spin-pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.2); opacity: 0.6; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Food thumbnail gallery */
+.food-gallery-section {
+    background: #f8faf9;
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid #e0ece6;
+}
+.food-gallery-section h3 {
+    color: #2C7A4A;
+    margin-top: 0;
+    margin-bottom: 12px;
+}
+.results-section {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 """
 
@@ -804,23 +888,111 @@ HEADER_HTML = """
 """
 
 
+def generate_meal_report(detections):
+    """Generate a nicely formatted HTML meal report for PDF printing."""
+    if not detections:
+        return None
+    now = datetime.now()
+    rows_html = ""
+    total_cal, total_pro, total_carb, total_fat = 0, 0, 0, 0
+    for det in detections:
+        name = det.get("food", "").replace("_", " ").title()
+        portion = det.get("portion", "N/A")
+        grams = det.get("grams", 0)
+        cal = det.get("calories", 0)
+        pro = det.get("protein", 0)
+        carb = det.get("carbs", 0)
+        fat = det.get("fat", 0)
+        total_cal += cal
+        total_pro += pro
+        total_carb += carb
+        total_fat += fat
+        rows_html += (
+            f"<tr><td>{name}</td><td>{portion}</td><td>{grams}g</td>"
+            f"<td>{cal}</td><td>{pro}g</td><td>{carb}g</td><td>{fat}g</td></tr>\n"
+        )
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NutriSnap AI - Meal Report</title>
+<style>
+  body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; color: #333; }}
+  .report-header {{ background: linear-gradient(135deg, #2C7A4A, #1A5A3A); color: white; padding: 24px; border-radius: 12px; text-align: center; margin-bottom: 24px; }}
+  .report-header h1 {{ margin: 0; font-size: 1.6em; }}
+  .report-header p {{ margin: 4px 0 0; opacity: 0.85; font-size: 0.9em; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 16px 0; }}
+  th {{ background: #2C7A4A; color: white; padding: 10px 12px; text-align: left; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #e0e0e0; }}
+  tr:nth-child(even) {{ background: #f8faf9; }}
+  .totals {{ background: #e8f5e9; padding: 16px; border-radius: 8px; margin-top: 16px; font-weight: 600; }}
+  .totals span {{ display: inline-block; margin-right: 20px; }}
+  .footer {{ margin-top: 24px; text-align: center; font-size: 0.85em; color: #888; }}
+  @media print {{ body {{ margin: 0; }} }}
+</style>
+</head>
+<body>
+<div class="report-header">
+  <h1>NutriSnap AI - Meal Report</h1>
+  <p>Generated on {now.strftime("%Y-%m-%d %H:%M:%S")}</p>
+</div>
+<h2>Detected Foods ({len(detections)} item(s))</h2>
+<table>
+<tr><th>Food</th><th>Portion</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr>
+{rows_html}
+</table>
+<div class="totals">
+  <strong>Totals:</strong>
+  <span>{round(total_cal, 1)} cal</span>
+  <span>{round(total_pro, 1)}g protein</span>
+  <span>{round(total_carb, 1)}g carbs</span>
+  <span>{round(total_fat, 1)}g fat</span>
+</div>
+<div class="footer">Generated by NutriSnap AI</div>
+</body>
+</html>"""
+    report_path = "meal_report.html"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return report_path
+
+
 def build_ui():
     """Build the complete Gradio interface."""
     config = load_config()
-    dark_mode_css = ""
-    if config.get("dark_mode"):
-        dark_mode_css = """
-        body, .gradio-container { background-color: #1a1a2e !important; color: #e0e0e0 !important; }
-        .gr-block, .gr-form, .gr-box { background-color: #16213e !important; color: #e0e0e0 !important; }
-        .gr-input, .gr-text-input, .gr-textbox textarea { background-color: #0f3460 !important; color: #e0e0e0 !important; border-color: #2C7A4A !important; }
-        .gr-button { border-color: #2C7A4A !important; }
-        """
+
+    # JavaScript for live dark mode toggle and spinner control
+    JS_HEAD = """
+    <script>
+    // Apply saved dark mode preference on load
+    (function() {
+        const isDark = """ + str(config.get("dark_mode", False)).lower() + """;
+        if (isDark) document.body.classList.add('dark-mode');
+    })();
+
+    function toggleDarkMode(enabled) {
+        if (enabled) {
+            document.body.classList.add('dark-mode');
+        } else {
+            document.body.classList.remove('dark-mode');
+        }
+    }
+
+    function showSpinner() {
+        var el = document.getElementById('analysis-spinner');
+        if (el) { el.classList.add('active'); }
+    }
+
+    function hideSpinner() {
+        var el = document.getElementById('analysis-spinner');
+        if (el) { el.classList.remove('active'); }
+    }
+    </script>
+    """
 
     full_css = CSS
-    if config.get("dark_mode"):
-        full_css += "\n" + dark_mode_css
 
-    with gr.Blocks(css=full_css, title="NutriSnap AI", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(css=full_css, title="NutriSnap AI", theme=gr.themes.Soft(), head=JS_HEAD) as demo:
         # Header
         gr.HTML(HEADER_HTML)
 
@@ -829,14 +1001,42 @@ def build_ui():
             with gr.TabItem("📸 Upload & Analyze"):
                 with gr.Row():
                     with gr.Column(scale=1):
+                        gr.Markdown("#### 📷 Upload Your Meal Photo")
                         input_image = gr.File(label="Upload Meal Photo", file_types=["image"],
                                                type="filepath")
                         analyze_btn = gr.Button("🔍 Analyze Food", variant="primary", size="lg")
                         status_display = gr.Markdown(value="", elem_classes=["status-box"])
                     with gr.Column(scale=1):
+                        gr.Markdown("#### 🖼️ Annotated Result")
                         output_image = gr.Image(label="Annotated Result", type="numpy")
+
+                # Loading spinner (hidden by default, shown via JS)
+                gr.HTML("""
+                <div id="analysis-spinner" class="analysis-spinner">
+                    <div class="spinner-icon">🔍</div>
+                    <div class="spinner-text">Analyzing your meal...</div>
+                </div>
+                """)
+
+                # Detected food items gallery
                 with gr.Row():
-                    output_md = gr.Markdown(value="Upload a photo and click **Analyze Food** to see results.")
+                    with gr.Column():
+                        gr.Markdown("#### 🍽️ Detected Food Items")
+                        food_gallery = gr.Gallery(
+                            label="Detected Food Items",
+                            columns=4,
+                            rows=1,
+                            height=240,
+                            object_fit="cover",
+                            show_label=False,
+                        )
+
+                # Results table
+                with gr.Row():
+                    with gr.Column(elem_classes=["results-section"]):
+                        output_md = gr.Markdown(
+                            value="Upload a photo and click **Analyze Food** to see results."
+                        )
 
                 # Manual calorie entry section
                 with gr.Row():
@@ -861,7 +1061,7 @@ def build_ui():
                     chart_macro = gr.Plot(label="Macro Distribution")
                 with gr.Row():
                     chart_weekly = gr.Plot(label="Weekly Trend")
-                    chart_top = gr.Plot(label="Top Foods")
+                    chart_top = gr.Plot(label="Top 5 Foods")
                 refresh_btn = gr.Button("🔄 Refresh Dashboard")
 
             # ---- Tab 3: Food Log ----
@@ -903,7 +1103,7 @@ def build_ui():
                     gr.Markdown("### 📤 Export Data")
                     with gr.Row():
                         export_csv_btn = gr.Button("📊 Export CSV")
-                        export_pdf_btn = gr.Button("📄 Export PDF")
+                        export_pdf_btn = gr.Button("📄 Export PDF Report")
                     export_status = gr.Markdown("")
                     export_file = gr.File(label="Download", visible=False)
 
@@ -919,13 +1119,17 @@ def build_ui():
         # ---- Event Handlers ----
         def on_analyze(file):
             if file is None:
-                return None, "Please upload an image first.", ""
+                return None, "Please upload an image first.", "", []
             status_msgs = []
             def collect_status(msg):
                 status_msgs.append(msg)
-            annotated, summary, detections = analyze_image(file, status_callback=collect_status)
+            annotated, summary, detections, thumbnails = analyze_image(file, status_callback=collect_status)
             status_text = "\n".join(status_msgs) if status_msgs else ""
-            return annotated, summary, status_text
+            return annotated, summary, status_text, thumbnails
+
+        def on_analyze_click():
+            """Show spinner when analyze button is clicked."""
+            return gr.update(visible=True)
 
         def on_manual_log(food_name, cal, protein, carbs, fat):
             if not food_name or not food_name.strip():
@@ -955,17 +1159,37 @@ def build_ui():
             return "⚠️ No meal log data to export.", gr.update(visible=False)
 
         def on_export_pdf():
-            return ("ℹ️ PDF export requires the `reportlab` package. "
-                    "Install it with: `pip install reportlab`. "
-                    "For now, use the CSV export option."), gr.update(visible=False)
+            """Generate an HTML meal report that can be printed as PDF."""
+            df = read_log()
+            if df.empty:
+                return "⚠️ No meal log data to export.", gr.update(visible=False)
+            # Build detections from recent log entries for the report
+            recent = df.tail(10)
+            mock_detections = []
+            for _, row in recent.iterrows():
+                mock_detections.append({
+                    "food": str(row.get("Food", "unknown")),
+                    "portion": str(row.get("Portion", "N/A")),
+                    "grams": 0,
+                    "calories": float(row.get("Calories", 0)),
+                    "protein": float(row.get("Protein (g)", 0)),
+                    "carbs": float(row.get("Carbs (g)", 0)),
+                    "fat": float(row.get("Fat (g)", 0)),
+                })
+            report_path = generate_meal_report(mock_detections)
+            if report_path:
+                return (f"✅ Meal report generated! Open `{report_path}` in your browser and use **Print → Save as PDF**.",
+                        gr.update(value=report_path, visible=True))
+            return "⚠️ Failed to generate report.", gr.update(visible=False)
 
         def on_dark_mode_change(enabled):
+            """Toggle dark mode live via JS + save config."""
             cfg = load_config()
             cfg["dark_mode"] = enabled
             save_config(cfg)
             if enabled:
-                return "🌙 Dark mode enabled. Restart the app for full effect."
-            return "☀️ Light mode enabled. Restart the app for full effect."
+                return "🌙 Dark mode enabled."
+            return "☀️ Light mode enabled."
 
         def on_refresh_dashboard():
             return build_dashboard()
@@ -974,8 +1198,17 @@ def build_ui():
             return read_log()
 
         # Wire up events
-        analyze_btn.click(fn=on_analyze, inputs=[input_image],
-                          outputs=[output_image, output_md, status_display])
+        analyze_btn.click(
+            fn=on_analyze, inputs=[input_image],
+            outputs=[output_image, output_md, status_display, food_gallery],
+            js="(function() { var el = document.getElementById('analysis-spinner'); if (el) el.classList.add('active'); })()"
+        )
+        # Hide spinner when analysis completes (via output change)
+        output_image.change(
+            fn=None, inputs=None, outputs=None,
+            js="(function() { var el = document.getElementById('analysis-spinner'); if (el) el.classList.remove('active'); })()"
+        )
+
         manual_log_btn.click(fn=on_manual_log,
                              inputs=[manual_food, manual_cal, manual_protein, manual_carbs, manual_fat],
                              outputs=[manual_status])
@@ -987,7 +1220,12 @@ def build_ui():
         clear_cache_btn.click(fn=on_clear_cache, outputs=[cache_status, cache_info])
         export_csv_btn.click(fn=on_export_csv, outputs=[export_status, export_file])
         export_pdf_btn.click(fn=on_export_pdf, outputs=[export_status, export_file])
-        dark_mode_toggle.change(fn=on_dark_mode_change, inputs=[dark_mode_toggle], outputs=[dark_mode_status])
+        dark_mode_toggle.change(
+            fn=on_dark_mode_change,
+            inputs=[dark_mode_toggle],
+            outputs=[dark_mode_status],
+            js="(function(val) { if (val) { document.body.classList.add('dark-mode'); } else { document.body.classList.remove('dark-mode'); } })"
+        )
 
         # Load data on startup
         demo.load(fn=on_refresh_dashboard,
@@ -998,13 +1236,388 @@ def build_ui():
 
 
 # ============================================
+# FALLBACK HTTP SERVER
+# ============================================
+
+def start_fallback_server(port=7860):
+    """Start a lightweight HTTP server serving the fallback HTML UI + REST API."""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from urllib.parse import urlparse
+    import io
+    import tempfile
+
+    HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fallback_ui.html")
+
+    def parse_multipart(body, boundary):
+        """Simple multipart/form-data parser (replaces deprecated cgi.FieldStorage)."""
+        parts = {}
+        boundary_bytes = boundary.encode("utf-8") if isinstance(boundary, str) else boundary
+        delimiter = b"--" + boundary_bytes
+        sections = body.split(delimiter)
+        for section in sections[1:]:  # skip preamble
+            if section.startswith(b"--"):
+                break  # end marker
+            # Split headers from content at double newline
+            header_end = section.find(b"\r\n\r\n")
+            if header_end == -1:
+                header_end = section.find(b"\n\n")
+                if header_end == -1:
+                    continue
+                content = section[header_end + 2:]
+            else:
+                content = section[header_end + 4:]
+            # Strip trailing \r\n
+            if content.endswith(b"\r\n"):
+                content = content[:-2]
+            headers_raw = section[:header_end].decode("utf-8", errors="replace")
+            # Extract name and filename from Content-Disposition
+            name = None
+            filename = None
+            for line in headers_raw.split("\n"):
+                if "content-disposition" in line.lower():
+                    for part in line.split(";"):
+                        part = part.strip()
+                        if part.startswith("name="):
+                            name = part.split("=", 1)[1].strip('"').strip("'")
+                        elif part.startswith("filename="):
+                            filename = part.split("=", 1)[1].strip('"').strip("'")
+            if name:
+                parts[name] = {"data": content, "filename": filename}
+        return parts
+
+    class FallbackHandler(BaseHTTPRequestHandler):
+        """HTTP handler for fallback UI + API endpoints."""
+
+        def _cors(self):
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+        def _json_response(self, data, status=200):
+            body = json.dumps(data).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self._cors()
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _read_json_body(self):
+            length = int(self.headers.get("Content-Length", 0))
+            if length:
+                return json.loads(self.rfile.read(length))
+            return {}
+
+        def _error(self, msg, status=400):
+            self._json_response({"error": msg}, status)
+
+        def log_message(self, fmt, *args):
+            print(f"[FallbackServer] {fmt % args}")
+
+        # ── OPTIONS (CORS preflight) ──
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self._cors()
+            self.end_headers()
+
+        # ── GET ──
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            path = parsed.path.rstrip("/")
+
+            if path == "" or path == "/":
+                self._serve_html()
+            elif path == "/api/log":
+                self._handle_get_log()
+            elif path == "/api/dashboard":
+                self._handle_get_dashboard()
+            elif path == "/api/settings":
+                self._handle_get_settings()
+            elif path == "/api/export/csv":
+                self._handle_export_csv()
+            else:
+                self._error("Not found", 404)
+
+        # ── POST ──
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            path = parsed.path.rstrip("/")
+
+            if path == "/api/analyze":
+                self._handle_analyze()
+            elif path == "/api/log/manual":
+                self._handle_manual_log()
+            elif path == "/api/settings":
+                self._handle_save_settings()
+            elif path == "/api/settings/test":
+                self._handle_test_api_key()
+            elif path == "/api/cache/clear":
+                self._handle_clear_cache()
+            else:
+                self._error("Not found", 404)
+
+        # ── HTML ──
+        def _serve_html(self):
+            try:
+                with open(HTML_PATH, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self._cors()
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+            except FileNotFoundError:
+                self._error("fallback_ui.html not found", 500)
+
+        # ── API: Analyze Image ──
+        def _handle_analyze(self):
+            try:
+                content_type = self.headers.get("Content-Type", "")
+                if "multipart/form-data" not in content_type:
+                    self._error("Expected multipart/form-data")
+                    return
+
+                # Extract boundary from Content-Type
+                boundary = None
+                for part in content_type.split(";"):
+                    part = part.strip()
+                    if part.startswith("boundary="):
+                        boundary = part.split("=", 1)[1].strip('"')
+                if not boundary:
+                    self._error("No boundary in Content-Type")
+                    return
+
+                # Parse multipart using manual parser
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_length)
+                parts = parse_multipart(body, boundary)
+
+                image_field = parts.get("image")
+                if image_field is None:
+                    self._error("No image file uploaded")
+                    return
+
+                # Save to temp file
+                filename = image_field.get("filename") or ".jpg"
+                suffix = os.path.splitext(filename)[1] or ".jpg"
+                tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+                tmp.write(image_field["data"])
+                tmp.close()
+
+                try:
+                    status_msgs = []
+                    def collect_status(msg):
+                        status_msgs.append(msg)
+
+                    annotated, summary, detections = analyze_image(
+                        tmp.name, status_callback=collect_status
+                    )
+
+                    if detections is None:
+                        self._json_response({
+                            "items": [],
+                            "totals": {"calories": 0, "protein": 0, "carbs": 0, "fat": 0},
+                            "messages": status_msgs + ["No food items detected."],
+                        })
+                        return
+
+                    items = []
+                    totals = {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
+                    for det in detections:
+                        item = {
+                            "food": det.get("food", "").replace("_", " ").title(),
+                            "portion": det.get("portion", ""),
+                            "grams": det.get("grams", 0),
+                            "calories": det.get("calories", 0),
+                            "protein": det.get("protein", 0),
+                            "carbs": det.get("carbs", 0),
+                            "fat": det.get("fat", 0),
+                            "confidence": det.get("confidence", 0),
+                        }
+                        items.append(item)
+                        totals["calories"] += item["calories"]
+                        totals["protein"] += item["protein"]
+                        totals["carbs"] += item["carbs"]
+                        totals["fat"] += item["fat"]
+
+                    totals = {k: round(v, 1) for k, v in totals.items()}
+                    self._json_response({
+                        "items": items, "totals": totals, "messages": status_msgs
+                    })
+                finally:
+                    os.unlink(tmp.name)
+
+            except Exception as e:
+                print(f"[FallbackServer] Analyze error: {e}")
+                self._error(str(e), 500)
+
+        # ── API: Get Log ──
+        def _handle_get_log(self):
+            try:
+                df = read_log()
+                entries = df.values.tolist()
+                self._json_response({"entries": entries, "columns": CSV_COLUMNS})
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Dashboard ──
+        def _handle_get_dashboard(self):
+            try:
+                df = read_log()
+                if df.empty:
+                    self._json_response({
+                        "stats": None, "daily": None, "macros": None,
+                        "weekly": None, "top_foods": None
+                    })
+                    return
+
+                df["Calories"] = pd.to_numeric(df["Calories"], errors="coerce").fillna(0)
+                df["Protein (g)"] = pd.to_numeric(df["Protein (g)"], errors="coerce").fillna(0)
+                df["Carbs (g)"] = pd.to_numeric(df["Carbs (g)"], errors="coerce").fillna(0)
+                df["Fat (g)"] = pd.to_numeric(df["Fat (g)"], errors="coerce").fillna(0)
+
+                total_cal = round(df["Calories"].sum(), 1)
+                total_meals = len(df)
+                avg_cal = round(df["Calories"].mean(), 1)
+
+                daily = df.groupby("Date")["Calories"].sum().reset_index()
+                macro_totals = {
+                    "Protein": round(df["Protein (g)"].sum(), 1),
+                    "Carbs": round(df["Carbs (g)"].sum(), 1),
+                    "Fat": round(df["Fat (g)"].sum(), 1),
+                }
+                df["DateObj"] = pd.to_datetime(df["Date"], errors="coerce")
+                weekly = df.dropna(subset=["DateObj"]).set_index("DateObj").resample("W")["Calories"].sum().reset_index()
+                weekly.columns = ["Week", "Calories"]
+                top = df["Food"].value_counts().head(5).reset_index()
+                top.columns = ["Food", "Count"]
+
+                self._json_response({
+                    "stats": {"total_meals": total_meals, "total_calories": total_cal, "avg_per_meal": avg_cal},
+                    "daily": {"labels": daily["Date"].tolist(), "values": daily["Calories"].tolist()},
+                    "macros": {"labels": list(macro_totals.keys()), "values": list(macro_totals.values())},
+                    "weekly": {
+                        "labels": [w.strftime("%Y-%m-%d") for w in weekly["Week"]],
+                        "values": weekly["Calories"].tolist()
+                    },
+                    "top_foods": {"labels": top["Food"].tolist(), "values": top["Count"].tolist()},
+                })
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Manual Log ──
+        def _handle_manual_log(self):
+            try:
+                data = self._read_json_body()
+                food = data.get("food", "").strip()
+                if not food:
+                    self._error("Food name is required")
+                    return
+                calories = float(data.get("calories", 0))
+                protein = float(data.get("protein", 0))
+                carbs = float(data.get("carbs", 0))
+                fat = float(data.get("fat", 0))
+                log_meal(food, calories, protein, carbs, fat, "Manual")
+                self._json_response({"success": True, "message": f"Logged: {food} - {calories} cal"})
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Get Settings ──
+        def _handle_get_settings(self):
+            try:
+                cfg = load_config()
+                self._json_response({
+                    "usda_api_key": cfg.get("usda_api_key", ""),
+                    "dark_mode": cfg.get("dark_mode", False),
+                    "cache_size": get_cache_size(),
+                })
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Save Settings ──
+        def _handle_save_settings(self):
+            try:
+                data = self._read_json_body()
+                cfg = load_config()
+                if "usda_api_key" in data:
+                    cfg["usda_api_key"] = data["usda_api_key"].strip()
+                if "dark_mode" in data:
+                    cfg["dark_mode"] = bool(data["dark_mode"])
+                save_config(cfg)
+                self._json_response({"success": True, "message": "Settings saved."})
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Test API Key ──
+        def _handle_test_api_key(self):
+            try:
+                data = self._read_json_body()
+                api_key = data.get("api_key", "").strip()
+                result = test_usda_connection(api_key)
+                success = "successful" in result.lower()
+                self._json_response({"success": success, "message": result})
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Clear Cache ──
+        def _handle_clear_cache(self):
+            try:
+                result = clear_cache()
+                self._json_response({"success": True, "message": result})
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Export CSV ──
+        def _handle_export_csv(self):
+            try:
+                if not os.path.exists(CSV_FILE):
+                    self._error("No meal log to export", 404)
+                    return
+                with open(CSV_FILE, "rb") as f:
+                    content = f.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/csv")
+                self.send_header("Content-Disposition", f'attachment; filename="{CSV_FILE}"')
+                self._cors()
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+            except Exception as e:
+                self._error(str(e), 500)
+
+    # ── Launch server ──
+    print(f"\n{'='*50}")
+    print(f"🌐 Fallback UI running at http://localhost:{port}")
+    print(f"{'='*50}\n")
+    server = HTTPServer(("0.0.0.0", port), FallbackHandler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[FallbackServer] Shutting down...")
+        server.shutdown()
+
+
+# ============================================
 # MAIN
 # ============================================
 
 if __name__ == "__main__":
+    import sys as _sys
+
     print("[NutriSnap] Loading models...")
     load_yolo()
     load_hf_classifier()
-    print("[NutriSnap] Starting Gradio app...")
-    demo = build_ui()
-    demo.launch(share=True)
+
+    if "--fallback" in _sys.argv:
+        print("[NutriSnap] --fallback flag detected. Starting HTML interface...")
+        start_fallback_server()
+    else:
+        try:
+            import gradio as gr  # noqa: F811
+            print("[NutriSnap] Starting Gradio app...")
+            demo = build_ui()
+            demo.launch(share=True)
+        except (ImportError, Exception) as e:
+            print(f"⚠️  Gradio unavailable ({e}). Launching fallback HTML interface...")
+            start_fallback_server()

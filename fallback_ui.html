@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NutriSnap AI</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+:root {
+  --primary: #2C7A4A; --secondary: #1A5A3A; --accent: #4CAF50;
+  --bg: #F5F9F8; --surface: #ffffff; --text: #1a1a2e; --text-secondary: #555;
+  --border: #e0e8e4; --shadow: rgba(0,0,0,0.07); --input-bg: #f8faf9;
+  --danger: #e74c3c; --warning: #f39c12; --info: #3498db;
+  --radius: 12px; --transition: 0.25s ease;
+}
+[data-theme="dark"] {
+  --bg: #0f1a14; --surface: #162420; --text: #e8f0ec; --text-secondary: #a0b8ac;
+  --border: #2a4038; --shadow: rgba(0,0,0,0.35); --input-bg: #1c3028;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Georgia', 'Cambria', serif;
+  background: var(--bg); color: var(--text);
+  min-height: 100vh; transition: background var(--transition), color var(--transition);
+}
+/* ── Header ── */
+.header {
+  background: linear-gradient(135deg, #2C7A4A, #1A5A3A);
+  padding: 28px 24px 22px; text-align: center; position: relative; overflow: hidden;
+}
+.header::before {
+  content: ''; position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 20% 50%, rgba(76,175,80,0.18) 0%, transparent 65%),
+              radial-gradient(ellipse at 80% 30%, rgba(255,255,255,0.06) 0%, transparent 50%);
+}
+.header h1 {
+  font-family: 'Trebuchet MS', 'Lucida Sans', sans-serif;
+  color: #fff; font-size: clamp(1.6em, 4vw, 2.4em); font-weight: 800;
+  letter-spacing: -0.5px; position: relative; text-shadow: 0 2px 12px rgba(0,0,0,0.25);
+}
+.header p {
+  color: rgba(255,255,255,0.75); font-size: 0.95em; margin-top: 5px;
+  font-style: italic; position: relative; letter-spacing: 0.5px;
+}
+/* ── Nav Tabs ── */
+.nav { display: flex; gap: 2px; padding: 0 16px; background: var(--surface);
+  border-bottom: 2px solid var(--border); overflow-x: auto; }
+.nav button {
+  background: none; border: none; padding: 13px 18px; cursor: pointer;
+  font-size: 0.92em; color: var(--text-secondary); font-family: inherit;
+  border-bottom: 3px solid transparent; transition: all var(--transition);
+  white-space: nowrap; font-weight: 600;
+}
+.nav button:hover { color: var(--primary); background: rgba(44,122,74,0.05); }
+.nav button.active {
+  color: var(--primary); border-bottom-color: var(--accent);
+  border-bottom-width: 4px;
+  background: rgba(44,122,74,0.07);
+}
+/* ── Layout ── */
+.container { max-width: 1000px; margin: 0 auto; padding: 20px 16px 40px; }
+.tab-panel { display: none; animation: fadeIn 0.3s ease; }
+.tab-panel.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.card {
+  background: var(--surface); border-radius: var(--radius); padding: 22px;
+  box-shadow: 0 2px 12px var(--shadow); border: 1px solid var(--border);
+  margin-bottom: 18px; transition: background var(--transition), border var(--transition);
+}
+.card h3 {
+  font-family: 'Trebuchet MS', sans-serif; color: var(--primary);
+  margin-bottom: 14px; font-size: 1.1em; border-bottom: 2px solid var(--border);
+  padding-bottom: 8px;
+}
+/* ── Upload area ── */
+.drop-zone {
+  border: 2px dashed var(--accent); border-radius: var(--radius);
+  padding: 48px 20px; text-align: center; cursor: pointer;
+  transition: all var(--transition); background: rgba(76,175,80,0.04);
+  position: relative;
+}
+.drop-zone:hover, .drop-zone.dragover {
+  border-color: var(--primary); background: rgba(76,175,80,0.1);
+  box-shadow: 0 0 0 4px rgba(76,175,80,0.1);
+}
+.drop-zone .icon { font-size: 2.8em; margin-bottom: 8px; }
+.drop-zone p { color: var(--text-secondary); font-size: 0.95em; }
+.drop-zone small { color: var(--text-secondary); opacity: 0.7; font-size: 0.82em; }
+.drop-zone input { display: none; }
+.preview-thumb {
+  max-width: 180px; max-height: 140px; border-radius: 8px;
+  margin-top: 12px; object-fit: cover; border: 2px solid var(--border);
+}
+/* ── Buttons ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 10px 20px; border-radius: 8px; border: none;
+  font-family: 'Trebuchet MS', sans-serif; font-weight: 700; font-size: 0.9em;
+  cursor: pointer; transition: all var(--transition); letter-spacing: 0.3px;
+}
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--secondary); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(44,122,74,0.3); }
+.btn-secondary { background: var(--accent); color: #fff; }
+.btn-secondary:hover { background: #3d9141; }
+.btn-outline { background: transparent; border: 2px solid var(--primary); color: var(--primary); }
+.btn-outline:hover { background: var(--primary); color: #fff; }
+.btn-danger { background: var(--danger); color: #fff; }
+.btn-danger:hover { background: #c0392b; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+/* ── Form inputs ── */
+.form-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.form-group { flex: 1; min-width: 140px; }
+.form-group label { display: block; font-size: 0.82em; font-weight: 700; color: var(--text-secondary);
+  margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.form-group input, .form-group select {
+  width: 100%; padding: 9px 12px; border-radius: 8px;
+  border: 1.5px solid var(--border); background: var(--input-bg); color: var(--text);
+  font-family: inherit; font-size: 0.92em; transition: border var(--transition);
+}
+.form-group input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(44,122,74,0.12); }
+/* ── Summary cards ── */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.stat-card {
+  padding: 18px; border-radius: var(--radius); text-align: center;
+  color: #fff; font-family: 'Trebuchet MS', sans-serif;
+  box-shadow: 0 3px 12px rgba(0,0,0,0.15);
+}
+.stat-card .value { font-size: 2em; font-weight: 800; line-height: 1; }
+.stat-card .label { font-size: 0.82em; opacity: 0.85; margin-top: 4px; }
+/* ── Table ── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 0.88em; }
+th { background: var(--primary); color: #fff; padding: 10px 12px;
+  text-align: left; cursor: pointer; user-select: none; white-space: nowrap; }
+th:hover { background: var(--secondary); }
+td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+tr:nth-child(even) { background: rgba(44,122,74,0.04); }
+tr:hover { background: rgba(44,122,74,0.09); }
+/* ── Charts ── */
+.charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+.chart-card {
+  background: var(--surface); border-radius: var(--radius); padding: 18px;
+  border: 1px solid var(--border); box-shadow: 0 2px 10px var(--shadow);
+  transition: box-shadow var(--transition);
+}
+.chart-card:hover { box-shadow: 0 4px 18px var(--shadow); }
+.chart-card h4 {
+  font-size: 0.92em; color: var(--primary); margin-bottom: 12px;
+  font-family: 'Trebuchet MS', sans-serif; font-weight: 700;
+  border-bottom: 2px solid var(--border); padding-bottom: 8px;
+}
+/* ── Tips ── */
+.tips-content h3 { margin-top: 20px; }
+.tips-content table { margin: 10px 0 18px; }
+.tips-content ul, .tips-content ol { padding-left: 22px; margin: 8px 0; }
+.tips-content li { margin-bottom: 5px; line-height: 1.55; }
+.tips-content p { line-height: 1.6; margin-bottom: 8px; }
+/* ── Spinner ── */
+.spinner-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.35);
+  z-index: 999; align-items: center; justify-content: center;
+}
+.spinner-overlay.show { display: flex; }
+.spinner {
+  width: 48px; height: 48px; border: 5px solid rgba(255,255,255,0.3);
+  border-top-color: #fff; border-radius: 50%; animation: spin 0.75s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* ── Toast ── */
+.toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  padding: 12px 18px; border-radius: 8px; color: #fff; font-size: 0.88em;
+  font-family: 'Trebuchet MS', sans-serif; font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2); animation: toastIn 0.3s ease;
+  max-width: 340px; display: flex; align-items: center; gap: 8px;
+}
+.toast.success { background: var(--primary); }
+.toast.error { background: var(--danger); }
+.toast.info { background: var(--info); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: none; } }
+/* ── Results layout ── */
+.results-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.results-layout .annotated-image img {
+  width: 100%;
+  border-radius: 10px;
+  border: 2px solid var(--border);
+}
+.food-items-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+}
+.food-item-card {
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 10px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  text-align: center;
+  border: 2px solid var(--accent);
+  transition: transform var(--transition), box-shadow var(--transition);
+  animation: fadeIn 0.4s ease both;
+}
+.food-item-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 18px rgba(44,122,74,0.18);
+}
+.food-item-card:nth-child(1) { animation-delay: 0.05s; }
+.food-item-card:nth-child(2) { animation-delay: 0.1s; }
+.food-item-card:nth-child(3) { animation-delay: 0.15s; }
+.food-item-card:nth-child(4) { animation-delay: 0.2s; }
+.food-item-card:nth-child(5) { animation-delay: 0.25s; }
+.food-item-card:nth-child(6) { animation-delay: 0.3s; }
+.food-item-card:nth-child(n+7) { animation-delay: 0.35s; }
+.food-item-card img {
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.food-item-card .food-name {
+  font-weight: 700;
+  margin-top: 8px;
+  color: var(--primary);
+  font-family: 'Trebuchet MS', sans-serif;
+  font-size: 0.88em;
+  line-height: 1.2;
+}
+.food-item-card .food-cals {
+  font-size: 0.82em;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+.food-item-card .food-macros {
+  font-size: 0.72em;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  opacity: 0.8;
+}
+.results-summary-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+  margin-bottom: 4px;
+}
+.results-summary-bar .sum-chip {
+  background: linear-gradient(135deg, #2C7A4A, #1A5A3A);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-family: 'Trebuchet MS', sans-serif;
+  font-weight: 700;
+  font-size: 0.85em;
+  box-shadow: 0 2px 8px rgba(44,122,74,0.25);
+}
+@media (max-width: 700px) {
+  .results-layout { grid-template-columns: 1fr; }
+  .charts-grid { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: 1fr; }
+}
+/* ── Results table ── */
+.results-table { margin-top: 14px; }
+.results-table th { background: var(--accent); font-size: 0.82em; }
+/* ── Settings ── */
+.settings-group { margin-bottom: 22px; }
+.settings-group h4 { color: var(--primary); margin-bottom: 10px; font-family: 'Trebuchet MS', sans-serif; }
+.toggle-row { display: flex; align-items: center; gap: 12px; }
+.toggle { position: relative; width: 50px; height: 26px; cursor: pointer; }
+.toggle input { display: none; }
+.toggle .slider {
+  position: absolute; inset: 0; background: #ccc; border-radius: 26px;
+  transition: var(--transition);
+}
+.toggle .slider::before {
+  content: ''; position: absolute; width: 20px; height: 20px;
+  left: 3px; top: 3px; background: #fff; border-radius: 50%;
+  transition: var(--transition);
+}
+.toggle input:checked + .slider { background: var(--primary); }
+.toggle input:checked + .slider::before { transform: translateX(24px); }
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  .nav { padding: 0 4px; }
+  .nav button { padding: 10px 10px; font-size: 0.82em; }
+  .container { padding: 12px 8px 30px; }
+  .form-row { flex-direction: column; }
+  .food-items-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="spinner-overlay" id="spinner"><div class="spinner"></div></div>
+<div class="toast-container" id="toasts"></div>
+
+<header class="header">
+  <h1>🍔 NutriSnap AI</h1>
+  <p>Snap. Identify. Track. Eat Better.</p>
+</header>
+
+<nav class="nav" id="nav">
+  <button class="active" data-tab="analyze">📸 Upload &amp; Analyze</button>
+  <button data-tab="dashboard">📊 Dashboard</button>
+  <button data-tab="log">📋 Food Log</button>
+  <button data-tab="tips">💡 Nutrition Tips</button>
+  <button data-tab="settings">⚙️ Settings</button>
+</nav>
+
+<main class="container">
+<!-- ════════════ TAB 1: ANALYZE ════════════ -->
+<section class="tab-panel active" id="tab-analyze">
+  <div class="card">
+    <h3>📸 Upload Meal Photo</h3>
+    <div class="drop-zone" id="dropZone">
+      <div class="icon">📷</div>
+      <p>Drag &amp; drop your meal photo here</p>
+      <small>or click to browse — JPG, PNG, WEBP</small>
+      <input type="file" id="fileInput" accept="image/*">
+      <img id="preview" class="preview-thumb" style="display:none" alt="Preview">
+    </div>
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn btn-primary" id="analyzeBtn" disabled>🔍 Analyze Food</button>
+      <button class="btn btn-outline" id="clearImgBtn" style="display:none">✕ Clear</button>
+    </div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none">
+    <h3>🍽️ Analysis Results</h3>
+    <div id="resultsBody"></div>
+  </div>
+
+  <div class="card">
+    <h3>✏️ Manual Entry</h3>
+    <p style="font-size:0.88em; color:var(--text-secondary); margin-bottom:12px;">
+      Can't detect? Log your food manually below.
+    </p>
+    <div class="form-row">
+      <div class="form-group" style="flex:2"><label>Food Name</label>
+        <input type="text" id="mFood" placeholder="e.g. Chicken breast"></div>
+      <div class="form-group"><label>Calories</label><input type="number" id="mCal" value="0" min="0"></div>
+    </div>
+    <div class="form-row">
+      <div class="form-group"><label>Protein (g)</label><input type="number" id="mPro" value="0" min="0" step="0.1"></div>
+      <div class="form-group"><label>Carbs (g)</label><input type="number" id="mCarb" value="0" min="0" step="0.1"></div>
+      <div class="form-group"><label>Fat (g)</label><input type="number" id="mFat" value="0" min="0" step="0.1"></div>
+    </div>
+    <button class="btn btn-secondary" id="manualLogBtn">📝 Log Manual Entry</button>
+  </div>
+</section>
+
+<!-- ════════════ TAB 2: DASHBOARD ════════════ -->
+<section class="tab-panel" id="tab-dashboard">
+  <div class="stats-grid" id="statsGrid"></div>
+  <div class="charts-grid">
+    <div class="chart-card"><h4>📊 Daily Calorie Intake</h4><canvas id="chartDaily"></canvas></div>
+    <div class="chart-card"><h4>🥧 Macronutrient Distribution</h4><canvas id="chartMacro"></canvas></div>
+    <div class="chart-card"><h4>📈 Weekly Calorie Trend</h4><canvas id="chartWeekly"></canvas></div>
+    <div class="chart-card"><h4>🏆 Top Foods Eaten</h4><canvas id="chartTop"></canvas></div>
+  </div>
+  <div style="text-align:center; margin-top:18px;">
+    <button class="btn btn-outline" id="refreshDashBtn">🔄 Refresh Dashboard</button>
+  </div>
+</section>
+
+<!-- ════════════ TAB 3: LOG ════════════ -->
+<section class="tab-panel" id="tab-log">
+  <div class="card">
+    <h3>📋 Meal History</h3>
+    <div class="table-wrap"><table id="logTable"><thead><tr>
+      <th data-col="0">Date</th><th data-col="1">Time</th><th data-col="2">Food</th>
+      <th data-col="3">Calories</th><th data-col="4">Protein</th>
+      <th data-col="5">Carbs</th><th data-col="6">Fat</th>
+      <th data-col="7">Portion</th>
+    </tr></thead><tbody id="logBody"></tbody></table></div>
+    <div style="text-align:center; margin-top:14px;">
+      <button class="btn btn-outline" id="refreshLogBtn">🔄 Refresh Log</button>
+    </div>
+  </div>
+</section>
+
+<!-- ════════════ TAB 4: TIPS ════════════ -->
+<section class="tab-panel" id="tab-tips">
+  <div class="card tips-content">
+    <h3>🥗 Nutrition Tips &amp; Guidelines</h3>
+    <h4 style="color:var(--primary); margin-top:18px;">Recommended Daily Intake (RDI)</h4>
+    <table><thead><tr><th>Nutrient</th><th>Adult Male</th><th>Adult Female</th></tr></thead>
+    <tbody>
+      <tr><td>Calories</td><td>2,500 kcal</td><td>2,000 kcal</td></tr>
+      <tr><td>Protein</td><td>56 g</td><td>46 g</td></tr>
+      <tr><td>Carbs</td><td>300 g</td><td>250 g</td></tr>
+      <tr><td>Fat</td><td>80 g</td><td>65 g</td></tr>
+    </tbody></table>
+
+    <h4 style="color:var(--primary);">📸 Tracking Best Practices</h4>
+    <ol>
+      <li><strong>Log immediately</strong> after eating for best accuracy</li>
+      <li><strong>Take clear photos</strong> with good lighting — avoid blurry or dark images</li>
+      <li><strong>Include the full plate</strong> so all foods are visible</li>
+      <li><strong>Review portion sizes</strong> — the app estimates based on image area</li>
+    </ol>
+
+    <h4 style="color:var(--primary);">📊 Understanding Your Dashboard</h4>
+    <ul>
+      <li><strong>Daily Calories</strong>: Compare against your RDI to avoid over/under-eating</li>
+      <li><strong>Macro Split</strong>: A balanced diet is roughly 25% protein, 50% carbs, 25% fat</li>
+      <li><strong>Weekly Trend</strong>: Look for consistency rather than perfection</li>
+      <li><strong>Top Foods</strong>: Helps identify if your diet lacks variety</li>
+    </ul>
+
+    <h4 style="color:var(--primary);">🥦 Healthy Eating Reminders</h4>
+    <ul>
+      <li>Aim for <strong>5+ servings of vegetables</strong> daily</li>
+      <li>Choose <strong>whole grains</strong> over refined</li>
+      <li>Stay hydrated: <strong>8 glasses of water</strong> per day</li>
+      <li>Limit <strong>processed foods</strong> and added sugars</li>
+      <li>Include <strong>lean protein</strong> in every meal</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ════════════ TAB 5: SETTINGS ════════════ -->
+<section class="tab-panel" id="tab-settings">
+  <div class="card">
+    <div class="settings-group">
+      <h4>🔑 USDA FoodData Central API</h4>
+      <p style="font-size:0.85em; color:var(--text-secondary); margin-bottom:10px;">
+        Get a free key at <a href="https://fdc.nal.usda.gov/api-key-signup.html" target="_blank" style="color:var(--primary)">data.nal.usda.gov</a>
+      </p>
+      <div class="form-row">
+        <div class="form-group" style="flex:3"><label>API Key</label>
+          <input type="password" id="apiKeyInput" placeholder="Enter your USDA API key..."></div>
+      </div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn btn-primary" id="testKeyBtn">🔌 Test Connection</button>
+        <button class="btn btn-secondary" id="saveKeyBtn">💾 Save Key</button>
+      </div>
+      <p id="keyStatus" style="margin-top:8px; font-size:0.88em;"></p>
+    </div>
+  </div>
+  <div class="card">
+    <div class="settings-group">
+      <h4>🗃️ Cache Management</h4>
+      <p style="font-size:0.88em; color:var(--text-secondary);" id="cacheInfo">Cached items: loading...</p>
+      <button class="btn btn-danger" id="clearCacheBtn" style="margin-top:8px;">🗑️ Clear Cache</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="settings-group">
+      <h4>📤 Export Data</h4>
+      <button class="btn btn-outline" id="exportCsvBtn">📊 Export CSV</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="settings-group">
+      <h4>🎨 Appearance</h4>
+      <div class="toggle-row">
+        <label class="toggle"><input type="checkbox" id="darkToggle"><span class="slider"></span></label>
+        <span style="font-size:0.92em;">Dark Mode</span>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<script>
+/* ══════════════════════════════════════════
+   NUTRISNAP AI — FALLBACK UI JAVASCRIPT
+   ══════════════════════════════════════════ */
+
+const API = '';  // same origin
+
+// ── Helpers ──
+function showSpinner() { document.getElementById('spinner').classList.add('show'); }
+function hideSpinner() { document.getElementById('spinner').classList.remove('show'); }
+
+function toast(msg, type='info') {
+  const c = document.getElementById('toasts');
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; t.style.transition='opacity 0.4s'; setTimeout(()=>t.remove(),400); }, 3500);
+}
+
+async function api(path, opts={}) {
+  try {
+    const res = await fetch(API + path, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  } catch(e) { toast(e.message, 'error'); throw e; }
+}
+
+// ── Tab switching ──
+document.querySelectorAll('.nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'dashboard') loadDashboard();
+    if (btn.dataset.tab === 'log') loadLog();
+  });
+});
+
+// ── Dark mode ──
+const darkToggle = document.getElementById('darkToggle');
+function applyDark(on) {
+  document.documentElement.setAttribute('data-theme', on ? 'dark' : 'light');
+  darkToggle.checked = on;
+}
+applyDark(localStorage.getItem('nutrisnap_dark') === 'true');
+darkToggle.addEventListener('change', () => {
+  const on = darkToggle.checked;
+  localStorage.setItem('nutrisnap_dark', on);
+  api('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ dark_mode: on }) });
+});
+
+// ── Image upload ──
+let selectedFile = null;
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const preview = document.getElementById('preview');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const clearImgBtn = document.getElementById('clearImgBtn');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFile(fileInput.files[0]); });
+
+function handleFile(file) {
+  if (!file.type.startsWith('image/')) { toast('Please select an image file', 'error'); return; }
+  selectedFile = file;
+  const reader = new FileReader();
+  reader.onload = e => { preview.src = e.target.result; preview.style.display = 'block'; };
+  reader.readAsDataURL(file);
+  analyzeBtn.disabled = false;
+  clearImgBtn.style.display = 'inline-flex';
+}
+
+clearImgBtn.addEventListener('click', () => {
+  selectedFile = null; fileInput.value = ''; preview.style.display = 'none';
+  analyzeBtn.disabled = true; clearImgBtn.style.display = 'none';
+  document.getElementById('resultsCard').style.display = 'none';
+});
+
+// ── Analyze ──
+analyzeBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+  showSpinner(); analyzeBtn.disabled = true;
+  const fd = new FormData();
+  fd.append('image', selectedFile);
+  try {
+    const data = await api('/api/analyze', { method:'POST', body: fd });
+    renderResults(data);
+    toast('Analysis complete!', 'success');
+  } catch(e) { /* toast already shown */ }
+  finally { hideSpinner(); analyzeBtn.disabled = false; }
+});
+
+function renderResults(data) {
+  const card = document.getElementById('resultsCard');
+  const body = document.getElementById('resultsBody');
+  card.style.display = 'block';
+  if (!data.items || !data.items.length) {
+    body.innerHTML = '<p style="color:var(--danger)">No food items detected. Try a clearer photo or use manual entry.</p>';
+    return;
+  }
+
+  let html = '';
+
+  // ── Top section: annotated image + food item cards ──
+  html += '<div class="results-layout">';
+
+  // Left: annotated image (use preview thumbnail as fallback)
+  html += '<div class="annotated-image">';
+  if (data.annotated_image_base64) {
+    html += `<img src="data:image/jpeg;base64,${data.annotated_image_base64}" alt="Annotated meal photo">`;
+  } else {
+    const previewEl = document.getElementById('preview');
+    html += previewEl.src
+      ? `<img src="${previewEl.src}" alt="Uploaded meal photo">`
+      : '<p style="color:var(--text-secondary)">No image available</p>';
+  }
+  html += '</div>';
+
+  // Right: per-item cropped food thumbnails
+  html += '<div>';
+  html += '<h4 style="font-family:Trebuchet MS,sans-serif; color:var(--primary); margin-bottom:10px; font-size:0.95em;">🔍 Detected Items</h4>';
+  if (data.crops && data.crops.length) {
+    html += '<div class="food-items-grid">';
+    data.crops.forEach((crop, i) => {
+      const imgSrc = crop.image_base64 ? `data:image/jpeg;base64,${crop.image_base64}` : '';
+      const cals = crop.calories != null ? `${crop.calories} cal` : '';
+      const macros = (crop.protein != null || crop.carbs != null || crop.fat != null)
+        ? `P:${crop.protein||0}g · C:${crop.carbs||0}g · F:${crop.fat||0}g` : '';
+      html += `<div class="food-item-card" style="animation-delay:${Math.min(i * 0.06, 0.36).toFixed(2)}s">`;
+      if (imgSrc) html += `<img src="${imgSrc}" alt="${crop.name || 'Food item'}">`;
+      html += `<div class="food-name">${crop.name || 'Item ' + (i+1)}</div>`;
+      if (cals) html += `<div class="food-cals">${cals}</div>`;
+      if (macros) html += `<div class="food-macros">${macros}</div>`;
+      html += '</div>';
+    });
+    html += '</div>';
+  } else {
+    // Fallback: show items as simple list cards if no crops
+    html += '<div class="food-items-grid">';
+    data.items.forEach((it, i) => {
+      html += `<div class="food-item-card" style="animation-delay:${Math.min(i * 0.06, 0.36).toFixed(2)}s">`;
+      html += `<div style="height:100px;display:flex;align-items:center;justify-content:center;font-size:2.5em;">🍽️</div>`;
+      html += `<div class="food-name">${it.food}</div>`;
+      html += `<div class="food-cals">${it.calories} cal</div>`;
+      html += `<div class="food-macros">P:${it.protein}g · C:${it.carbs}g · F:${it.fat}g</div>`;
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>'; // close right column
+  html += '</div>'; // close results-layout
+
+  // ── Summary chips ──
+  html += '<div class="results-summary-bar">';
+  html += `<span class="sum-chip">🔥 ${data.totals.calories} cal</span>`;
+  html += `<span class="sum-chip">💪 ${data.totals.protein}g protein</span>`;
+  html += `<span class="sum-chip">🌾 ${data.totals.carbs}g carbs</span>`;
+  html += `<span class="sum-chip">🧈 ${data.totals.fat}g fat</span>`;
+  html += '</div>';
+
+  // ── Nutrition detail table ──
+  html += '<table class="results-table"><thead><tr><th>Food</th><th>Portion</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>';
+  data.items.forEach(it => {
+    html += `<tr><td>${it.food}</td><td>${it.portion}</td><td>${it.grams}g</td><td>${it.calories}</td><td>${it.protein}g</td><td>${it.carbs}g</td><td>${it.fat}g</td></tr>`;
+  });
+  html += '</tbody></table>';
+
+  // ── Messages ──
+  if (data.messages && data.messages.length) {
+    html += '<div style="margin-top:10px; padding:10px; background:rgba(44,122,74,0.06); border-radius:8px; font-size:0.85em;">';
+    data.messages.forEach(m => html += `<div>${m}</div>`);
+    html += '</div>';
+  }
+
+  body.innerHTML = html;
+}
+
+// ── Manual log ──
+document.getElementById('manualLogBtn').addEventListener('click', async () => {
+  const food = document.getElementById('mFood').value.trim();
+  if (!food) { toast('Please enter a food name', 'error'); return; }
+  showSpinner();
+  try {
+    await api('/api/log/manual', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        food, calories: +document.getElementById('mCal').value,
+        protein: +document.getElementById('mPro').value,
+        carbs: +document.getElementById('mCarb').value,
+        fat: +document.getElementById('mFat').value
+      })});
+    toast(`Logged: ${food}`, 'success');
+    document.getElementById('mFood').value = '';
+  } catch(e) {} finally { hideSpinner(); }
+});
+
+// ── Dashboard ──
+let charts = {};
+async function loadDashboard() {
+  showSpinner();
+  try {
+    const d = await api('/api/dashboard');
+    renderStats(d.stats);
+    renderCharts(d);
+  } catch(e) {} finally { hideSpinner(); }
+}
+
+function renderStats(s) {
+  if (!s) { document.getElementById('statsGrid').innerHTML = ''; return; }
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat-card" style="background:linear-gradient(135deg,#2C7A4A,#1A5A3A)"><div class="value">${s.total_meals}</div><div class="label">📊 Total Meals</div></div>
+    <div class="stat-card" style="background:linear-gradient(135deg,#4CAF50,#388E3C)"><div class="value">${s.total_calories.toLocaleString()}</div><div class="label">🔥 Total Calories</div></div>
+    <div class="stat-card" style="background:linear-gradient(135deg,#1A5A3A,#0d3d22)"><div class="value">${s.avg_per_meal}</div><div class="label">📈 Avg per Meal</div></div>`;
+}
+
+function destroyChart(key) { if (charts[key]) { charts[key].destroy(); charts[key] = null; } }
+
+function renderCharts(d) {
+  const green = ['#2C7A4A','#4CAF50','#81C784','#A5D6A7','#C8E6C9','#1A5A3A','#66BB6A','#43A047'];
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const tickColor = isDark ? '#a0b8ac' : '#555';
+
+  // Daily calories
+  destroyChart('daily');
+  charts.daily = new Chart(document.getElementById('chartDaily'), {
+    type:'bar', data:{ labels: d.daily?.labels||[], datasets:[{ label:'Calories',
+      data: d.daily?.values||[], backgroundColor:'#2C7A4A', borderRadius:6 }]},
+    options:{ responsive:true, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{color:tickColor},grid:{color:gridColor}}, y:{ticks:{color:tickColor},grid:{color:gridColor}} }}
+  });
+
+  // Macro pie
+  destroyChart('macro');
+  charts.macro = new Chart(document.getElementById('chartMacro'), {
+    type:'doughnut', data:{ labels: d.macros?.labels||[], datasets:[{
+      data: d.macros?.values||[], backgroundColor:['#2C7A4A','#4CAF50','#81C784'], borderWidth:2 }]},
+    options:{ responsive:true, plugins:{legend:{position:'bottom',labels:{color:tickColor}}} }
+  });
+
+  // Weekly trend
+  destroyChart('weekly');
+  charts.weekly = new Chart(document.getElementById('chartWeekly'), {
+    type:'line', data:{ labels: d.weekly?.labels||[], datasets:[{ label:'Calories',
+      data: d.weekly?.values||[], borderColor:'#2C7A4A', backgroundColor:'rgba(44,122,74,0.1)',
+      fill:true, tension:0.4, pointRadius:4, pointBackgroundColor:'#4CAF50' }]},
+    options:{ responsive:true, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{color:tickColor},grid:{color:gridColor}}, y:{ticks:{color:tickColor},grid:{color:gridColor}} }}
+  });
+
+  // Top foods
+  destroyChart('top');
+  charts.top = new Chart(document.getElementById('chartTop'), {
+    type:'bar', data:{ labels: d.top_foods?.labels||[], datasets:[{ label:'Count',
+      data: d.top_foods?.values||[], backgroundColor: green, borderRadius:6 }]},
+    options:{ indexAxis:'y', responsive:true, plugins:{legend:{display:false}},
+      scales:{ x:{ticks:{color:tickColor},grid:{color:gridColor}}, y:{ticks:{color:tickColor},grid:{color:gridColor}} }}
+  });
+}
+document.getElementById('refreshDashBtn').addEventListener('click', loadDashboard);
+
+// ── Food Log ──
+let logSortCol = 0, logSortAsc = false;
+async function loadLog() {
+  showSpinner();
+  try {
+    const d = await api('/api/log');
+    renderLogTable(d.entries || []);
+  } catch(e) {} finally { hideSpinner(); }
+}
+
+function renderLogTable(entries) {
+  const tbody = document.getElementById('logBody');
+  const sorted = [...entries].sort((a,b) => {
+    let va = a[logSortCol], vb = b[logSortCol];
+    if (!isNaN(va) && !isNaN(vb)) { va = +va; vb = +vb; }
+    return logSortAsc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
+  });
+  tbody.innerHTML = sorted.map(r => '<tr>' + r.map(c => `<td>${c ?? ''}</td>`).join('') + '</tr>').join('');
+  if (!sorted.length) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-secondary);">No meals logged yet</td></tr>';
+}
+
+document.querySelectorAll('#logTable th').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = +th.dataset.col;
+    if (logSortCol === col) logSortAsc = !logSortAsc;
+    else { logSortCol = col; logSortAsc = true; }
+    loadLog();
+  });
+});
+document.getElementById('refreshLogBtn').addEventListener('click', loadLog);
+
+// ── Settings ──
+async function loadSettings() {
+  try {
+    const d = await api('/api/settings');
+    document.getElementById('apiKeyInput').value = d.usda_api_key || '';
+    applyDark(d.dark_mode || false);
+    document.getElementById('cacheInfo').textContent = `Cached items: ${d.cache_size ?? 0}`;
+  } catch(e) {}
+}
+
+document.getElementById('testKeyBtn').addEventListener('click', async () => {
+  const key = document.getElementById('apiKeyInput').value;
+  showSpinner();
+  try {
+    const d = await api('/api/settings/test', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ api_key: key }) });
+    document.getElementById('keyStatus').textContent = d.message;
+    toast(d.message, d.success ? 'success' : 'error');
+  } catch(e) {} finally { hideSpinner(); }
+});
+
+document.getElementById('saveKeyBtn').addEventListener('click', async () => {
+  const key = document.getElementById('apiKeyInput').value;
+  showSpinner();
+  try {
+    await api('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ usda_api_key: key }) });
+    toast('API key saved!', 'success');
+  } catch(e) {} finally { hideSpinner(); }
+});
+
+document.getElementById('clearCacheBtn').addEventListener('click', async () => {
+  showSpinner();
+  try {
+    const d = await api('/api/cache/clear', { method:'POST' });
+    toast(d.message, 'success');
+    document.getElementById('cacheInfo').textContent = `Cached items: 0`;
+  } catch(e) {} finally { hideSpinner(); }
+});
+
+document.getElementById('exportCsvBtn').addEventListener('click', () => {
+  window.open(API + '/api/export/csv', '_blank');
+  toast('CSV download started', 'success');
+});
+
+// ── Init ──
+loadSettings();
+</script>
+</body>
+</html>
