@@ -2,13 +2,16 @@
 NutriSnap AI - Single-file food tracking application.
 Uses YOLOv8 for detection, HuggingFace classifier as fallback,
 Gradio for UI, Plotly/Matplotlib for dashboard charts.
+USDA & Open Food Facts APIs for nutrition data with local fallback.
 Run: python app.py
 """
 
 import os
 import csv
+import json
+import time
 import warnings
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import cv2
@@ -21,12 +24,30 @@ import plotly.express as px
 import plotly.graph_objects as go
 from PIL import Image
 import gradio as gr
+import requests
 
 warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------------------------
-# Nutrition Database (50+ foods, per 100g values)
-# ---------------------------------------------------------------------------
+# ============================================
+# CONFIGURATION & CONSTANTS
+# ============================================
+
+CSV_FILE = "meal_log.csv"
+CSV_COLUMNS = ["Date", "Time", "Food", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Portion", "Confirmed"]
+CACHE_FILE = "nutrition_cache.json"
+CONFIG_FILE = "nutri_config.json"
+CACHE_EXPIRY_DAYS = 7
+
+# Color theme
+THEME_PRIMARY = "#2C7A4A"
+THEME_SECONDARY = "#1A5A3A"
+THEME_ACCENT = "#4CAF50"
+THEME_BG = "#F5F9F8"
+THEME_CHART_COLORS = ["#2C7A4A", "#4CAF50", "#81C784", "#A5D6A7"]
+
+# ============================================
+# NUTRITION DATABASE (last-resort fallback)
+# ============================================
 
 NUTRITION_DB = {
     "apple": {"calories": 52, "protein": 0.3, "carbs": 14.0, "fat": 0.2, "typical_g": 180},
@@ -96,13 +117,187 @@ COCO_FOOD_CLASSES = {
     54: "donut", 55: "cake",
 }
 
-CSV_FILE = "meal_log.csv"
-CSV_COLUMNS = ["Date", "Time", "Food", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Portion", "Confirmed"]
+# ============================================
+# NUTRITION API FUNCTIONS
+# ============================================
+
+def search_usda_food(query, api_key):
+    """Search USDA FoodData Central for nutrition info."""
+    try:
+        url = "https://api.nal.usda.gov/fdc/v1/foods/search"
+        params = {"api_key": api_key, "query": query, "pageSize": 3}
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            foods = data.get("foods", [])
+            if not foods:
+                return None
+            food = foods[0]
+            nutrients = {}
+            for n in food.get("foodNutrients", []):
+                name = n.get("nutrientName", "").lower()
+                val = n.get("value", 0)
+                if "energy" in name and n.get("unitName", "") == "KCAL":
+                    nutrients["calories"] = val
+                elif "protein" in name:
+                    nutrients["protein"] = val
+                elif "carbohydrate" in name and "by difference" in name:
+                    nutrients["carbs"] = val
+                elif name == "total lipid (fat)":
+                    nutrients["fat"] = val
+            if "calories" in nutrients:
+                nutrients.setdefault("protein", 0)
+                nutrients.setdefault("carbs", 0)
+                nutrients.setdefault("fat", 0)
+                nutrients["source"] = "USDA"
+                return nutrients
+        return None
+    except Exception as e:
+        print(f"[NutriSnap] USDA API error: {e}")
+        return None
 
 
-# ---------------------------------------------------------------------------
-# Model Loading (with graceful fallbacks)
-# ---------------------------------------------------------------------------
+def search_openfoodfacts(query):
+    """Search Open Food Facts for nutrition info."""
+    try:
+        url = "https://world.openfoodfacts.org/cgi/search.pl"
+        params = {"search_terms": query, "json": 1, "page_size": 3}
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            products = data.get("products", [])
+            if not products:
+                return None
+            product = products[0]
+            nutriments = product.get("nutriments", {})
+            calories = nutriments.get("energy-kcal_100g") or nutriments.get("energy-kcal")
+            if calories is None:
+                return None
+            return {
+                "calories": float(calories),
+                "protein": float(nutriments.get("proteins_100g", 0) or 0),
+                "carbs": float(nutriments.get("carbohydrates_100g", 0) or 0),
+                "fat": float(nutriments.get("fat_100g", 0) or 0),
+                "source": "OpenFoodFacts",
+            }
+        return None
+    except Exception as e:
+        print(f"[NutriSnap] Open Food Facts API error: {e}")
+        return None
+
+
+# ============================================
+# CACHE SYSTEM
+# ============================================
+
+def _load_cache():
+    """Load the nutrition cache from disk."""
+    try:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_cache(cache):
+    """Save the nutrition cache to disk."""
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(cache, f, indent=2)
+    except Exception as e:
+        print(f"[NutriSnap] Cache save error: {e}")
+
+
+def cache_nutrition(food_name, data):
+    """Store nutrition data in cache with timestamp."""
+    cache = _load_cache()
+    cache[food_name.lower().strip()] = {
+        "data": data,
+        "timestamp": datetime.now().isoformat(),
+    }
+    _save_cache(cache)
+
+
+def get_cached_nutrition(food_name):
+    """Retrieve cached nutrition data if < 7 days old."""
+    cache = _load_cache()
+    key = food_name.lower().strip()
+    entry = cache.get(key)
+    if entry:
+        try:
+            ts = datetime.fromisoformat(entry["timestamp"])
+            if datetime.now() - ts < timedelta(days=CACHE_EXPIRY_DAYS):
+                return entry["data"]
+        except Exception:
+            pass
+    return None
+
+
+def get_cache_size():
+    """Return number of items in the nutrition cache."""
+    cache = _load_cache()
+    return len(cache)
+
+
+def clear_cache():
+    """Delete the nutrition cache file."""
+    try:
+        if os.path.exists(CACHE_FILE):
+            os.remove(CACHE_FILE)
+            return "Cache cleared successfully."
+        return "Cache was already empty."
+    except Exception as e:
+        return f"Error clearing cache: {e}"
+
+
+# ============================================
+# SETTINGS FUNCTIONS
+# ============================================
+
+def load_config():
+    """Load app configuration from disk."""
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {"usda_api_key": "", "dark_mode": False}
+
+
+def save_config(config):
+    """Save app configuration to disk."""
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"[NutriSnap] Config save error: {e}")
+        return False
+
+
+def test_usda_connection(api_key):
+    """Test USDA API connection with a sample query."""
+    if not api_key or not api_key.strip():
+        return "Please enter an API key first."
+    result = search_usda_food("apple", api_key.strip())
+    if result:
+        return f"Connection successful! Found: Apple - {result['calories']} kcal/100g"
+    return "Connection failed. Check your API key and try again."
+
+
+def export_csv_file():
+    """Return the CSV file path for download."""
+    if os.path.exists(CSV_FILE):
+        return CSV_FILE
+    return None
+
+
+# ============================================
+# AI DETECTION (EXISTING - keep as-is)
+# ============================================
 
 yolo_model = None
 hf_classifier = None
@@ -138,9 +333,9 @@ def load_hf_classifier():
         return False
 
 
-# ---------------------------------------------------------------------------
-# CSV Logging
-# ---------------------------------------------------------------------------
+# ============================================
+# CSV LOGGING
+# ============================================
 
 def ensure_csv():
     """Create CSV file with headers if it doesn't exist."""
@@ -167,7 +362,6 @@ def read_log():
     ensure_csv()
     try:
         df = pd.read_csv(CSV_FILE)
-        # Auto-migrate if columns changed
         for col in CSV_COLUMNS:
             if col not in df.columns:
                 df[col] = ""
@@ -176,24 +370,85 @@ def read_log():
         return pd.DataFrame(columns=CSV_COLUMNS)
 
 
-def calculate_nutrition(food_name, grams):
-    """Calculate nutrition for a given portion."""
+# ============================================
+# ANALYSIS PIPELINE (MODIFIED with API lookup)
+# ============================================
+
+def calculate_nutrition(food_name, grams, status_callback=None):
+    """
+    Calculate nutrition for a given portion using the fallback chain:
+    1. Check local cache
+    2. Query USDA API (if key configured)
+    3. Query Open Food Facts
+    4. Fallback to local NUTRITION_DB
+    5. Return None if all fail
+    """
     key = food_name.lower().strip().replace(" ", "_")
-    if key not in NUTRITION_DB:
-        return None
-    info = NUTRITION_DB[key]
-    factor = grams / 100.0
-    return {
-        "calories": round(info["calories"] * factor, 1),
-        "protein": round(info["protein"] * factor, 1),
-        "carbs": round(info["carbs"] * factor, 1),
-        "fat": round(info["fat"] * factor, 1),
-    }
+    display_name = food_name.replace("_", " ").title()
 
+    def _notify(msg):
+        if status_callback:
+            status_callback(msg)
 
-# ---------------------------------------------------------------------------
-# Food Analysis Pipeline
-# ---------------------------------------------------------------------------
+    # 1. Check cache
+    cached = get_cached_nutrition(key)
+    if cached:
+        _notify(f"✅ Using cached data for {display_name}")
+        factor = grams / 100.0
+        return {
+            "calories": round(cached["calories"] * factor, 1),
+            "protein": round(cached["protein"] * factor, 1),
+            "carbs": round(cached["carbs"] * factor, 1),
+            "fat": round(cached["fat"] * factor, 1),
+        }
+
+    # 2. Try USDA API
+    config = load_config()
+    api_key = config.get("usda_api_key", "")
+    if api_key and api_key.strip():
+        _notify(f"🔍 Searching USDA for {display_name}...")
+        usda_result = search_usda_food(food_name, api_key.strip())
+        if usda_result:
+            _notify(f"✅ Found in USDA: {display_name}")
+            cache_nutrition(key, usda_result)
+            factor = grams / 100.0
+            return {
+                "calories": round(usda_result["calories"] * factor, 1),
+                "protein": round(usda_result["protein"] * factor, 1),
+                "carbs": round(usda_result["carbs"] * factor, 1),
+                "fat": round(usda_result["fat"] * factor, 1),
+            }
+
+    # 3. Try Open Food Facts
+    _notify(f"🔍 Searching Open Food Facts for {display_name}...")
+    off_result = search_openfoodfacts(food_name)
+    if off_result:
+        _notify(f"✅ Found in Open Food Facts: {display_name}")
+        cache_nutrition(key, off_result)
+        factor = grams / 100.0
+        return {
+            "calories": round(off_result["calories"] * factor, 1),
+            "protein": round(off_result["protein"] * factor, 1),
+            "carbs": round(off_result["carbs"] * factor, 1),
+            "fat": round(off_result["fat"] * factor, 1),
+        }
+
+    # 4. Fallback to local DB
+    if key in NUTRITION_DB:
+        _notify(f"⚠️ Using fallback local data for {display_name}")
+        info = NUTRITION_DB[key]
+        factor = grams / 100.0
+        return {
+            "calories": round(info["calories"] * factor, 1),
+            "protein": round(info["protein"] * factor, 1),
+            "carbs": round(info["carbs"] * factor, 1),
+            "fat": round(info["fat"] * factor, 1),
+        }
+
+    # 5. All failed
+    _notify(f"❌ No nutrition data found for {display_name}")
+    return None
+
 
 def estimate_portion(bbox, img_shape):
     """Estimate portion size from bounding box area relative to image."""
@@ -253,7 +508,6 @@ def classify_with_hf(image_pil):
             idx = top5.indices[0][i].item()
             score = top5.values[0][i].item()
             label = hf_classifier.config.id2label[idx].lower().replace("-", "_").replace(" ", "_")
-            # Match to our DB
             for db_key in NUTRITION_DB:
                 if db_key in label or label in db_key:
                     results.append({"food": db_key, "confidence": round(score, 2)})
@@ -267,7 +521,7 @@ def classify_with_hf(image_pil):
 def draw_annotations(image_np, detections):
     """Draw bounding boxes and labels on the image."""
     annotated = image_np.copy()
-    colors = [(0, 255, 0), (255, 165, 0), (0, 165, 255), (255, 0, 255),
+    colors = [(44, 122, 74), (76, 175, 80), (129, 199, 132), (255, 165, 0),
               (0, 255, 255), (255, 0, 0), (128, 255, 0), (0, 128, 255)]
     for i, det in enumerate(detections):
         color = colors[i % len(colors)]
@@ -281,26 +535,33 @@ def draw_annotations(image_np, detections):
     return annotated
 
 
-def analyze_image(image_path):
+def analyze_image(image_path, status_callback=None):
     """
     Full analysis pipeline:
     1. Try YOLOv8 for multi-food detection
     2. If no foods found, try HuggingFace classifier
-    3. Calculate nutrition, estimate portions, log results
+    3. Calculate nutrition (via API chain), estimate portions, log results
     """
+    if status_callback:
+        status_callback("📸 Loading image...")
+
     img_pil = Image.open(image_path).convert("RGB")
     img_np = np.array(img_pil)
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
     img_shape = img_np.shape[:2]
+
+    if status_callback:
+        status_callback("🔍 Detecting food items...")
 
     # Step 1: YOLO detection
     detections = detect_with_yolo(img_bgr)
 
     # Step 2: Fallback to HF classifier
     if not detections:
+        if status_callback:
+            status_callback("🔍 Trying AI classifier...")
         hf_results = classify_with_hf(img_pil)
         if hf_results:
-            # Assign full-image bbox for classifier results
             h, w = img_shape
             for r in hf_results:
                 r["bbox"] = [int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9)]
@@ -310,14 +571,18 @@ def analyze_image(image_path):
         return None, "No food items detected. Try a clearer photo of a meal.", None
 
     # Step 3: Calculate nutrition and portions
+    if status_callback:
+        status_callback("🧮 Calculating nutrition...")
     results = []
     total_cal, total_pro, total_carb, total_fat = 0, 0, 0, 0
+    status_messages = []
+
     for det in detections:
         food = det["food"]
         portion_label, portion_mult = estimate_portion(det["bbox"], img_shape)
         typical_g = NUTRITION_DB.get(food, {}).get("typical_g", 150)
         grams = round(typical_g * portion_mult)
-        nutr = calculate_nutrition(food, grams)
+        nutr = calculate_nutrition(food, grams, status_callback=status_messages.append)
         if nutr:
             det.update(nutr)
             det["portion"] = portion_label
@@ -329,6 +594,11 @@ def analyze_image(image_path):
             total_fat += nutr["fat"]
             log_meal(food.replace("_", " ").title(), nutr["calories"],
                      nutr["protein"], nutr["carbs"], nutr["fat"], portion_label)
+
+    if status_callback:
+        for msg in status_messages:
+            status_callback(msg)
+        status_callback("✅ Analysis complete!")
 
     # Step 4: Annotate image
     annotated = draw_annotations(img_bgr, results)
@@ -349,12 +619,17 @@ def analyze_image(image_path):
                          f"{round(total_carb, 1)}g carbs | "
                          f"{round(total_fat, 1)}g fat**")
 
+    if status_messages:
+        summary_lines.append("\n---\n**Lookup Status:**")
+        for msg in status_messages:
+            summary_lines.append(f"  \n{msg}")
+
     return annotated_rgb, "\n".join(summary_lines), results
 
 
-# ---------------------------------------------------------------------------
-# Dashboard Charts
-# ---------------------------------------------------------------------------
+# ============================================
+# DASHBOARD (MODIFIED)
+# ============================================
 
 def build_dashboard():
     """Generate dashboard charts from meal log."""
@@ -368,11 +643,11 @@ def build_dashboard():
     df["Carbs (g)"] = pd.to_numeric(df["Carbs (g)"], errors="coerce").fillna(0)
     df["Fat (g)"] = pd.to_numeric(df["Fat (g)"], errors="coerce").fillna(0)
 
-    # 1. Daily calorie intake (bar chart)
+    # 1. Daily calorie intake
     daily = df.groupby("Date")["Calories"].sum().reset_index()
     fig_daily = px.bar(daily, x="Date", y="Calories",
                        title="Daily Calorie Intake",
-                       color_discrete_sequence=["#003366"])
+                       color_discrete_sequence=[THEME_PRIMARY])
     fig_daily.update_layout(template="plotly_white", height=350)
 
     # 2. Macro distribution (pie chart)
@@ -383,48 +658,107 @@ def build_dashboard():
     }
     fig_macro = px.pie(names=list(macro_totals.keys()), values=list(macro_totals.values()),
                        title="Macronutrient Distribution",
-                       color_discrete_sequence=["#003366", "#0066cc", "#66b2ff"])
+                       color_discrete_sequence=[THEME_PRIMARY, THEME_ACCENT, "#81C784"])
     fig_macro.update_layout(template="plotly_white", height=350)
 
-    # 3. Weekly calorie trend (line chart)
+    # 3. Weekly calorie trend
     df["DateObj"] = pd.to_datetime(df["Date"], errors="coerce")
     weekly = df.dropna(subset=["DateObj"]).set_index("DateObj").resample("W")["Calories"].sum().reset_index()
     weekly.columns = ["Week", "Calories"]
     fig_weekly = px.line(weekly, x="Week", y="Calories",
                          title="Weekly Calorie Trend",
-                         color_discrete_sequence=["#003366"])
+                         color_discrete_sequence=[THEME_PRIMARY])
     fig_weekly.update_layout(template="plotly_white", height=350)
 
-    # 4. Top foods eaten (horizontal bar)
+    # 4. Top foods eaten
     top = df["Food"].value_counts().head(8).reset_index()
     top.columns = ["Food", "Count"]
     fig_top = px.bar(top, y="Food", x="Count", orientation="h",
                      title="Top Foods Eaten",
-                     color_discrete_sequence=["#0066cc"])
+                     color_discrete_sequence=[THEME_ACCENT])
     fig_top.update_layout(template="plotly_white", height=350, yaxis={"categoryorder": "total ascending"})
 
-    # Summary stats
+    # Summary cards
     total_cal = round(df["Calories"].sum(), 1)
     total_meals = len(df)
     avg_cal = round(df["Calories"].mean(), 1)
-    stats = (f"**Total meals logged:** {total_meals} | "
-             f"**Total calories:** {total_cal} | "
-             f"**Avg per meal:** {avg_cal} cal")
+    stats = (f"<div style='display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;'>"
+             f"<div style='background:{THEME_PRIMARY};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
+             f"<div style='font-size:1.8em;font-weight:700;'>{total_meals}</div><div style='opacity:0.85;font-size:0.9em;'>📊 Total Meals</div></div>"
+             f"<div style='background:{THEME_ACCENT};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
+             f"<div style='font-size:1.8em;font-weight:700;'>{total_cal:,.0f}</div><div style='opacity:0.85;font-size:0.9em;'>🔥 Total Calories</div></div>"
+             f"<div style='background:{THEME_SECONDARY};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
+             f"<div style='font-size:1.8em;font-weight:700;'>{avg_cal:.0f} cal</div><div style='opacity:0.85;font-size:0.9em;'>📈 Avg per Meal</div></div>"
+             f"</div>")
 
     return fig_daily, fig_macro, fig_weekly, fig_top, stats
 
 
-# ---------------------------------------------------------------------------
-# Gradio UI
-# ---------------------------------------------------------------------------
+# ============================================
+# GRADIO UI (MODIFIED)
+# ============================================
 
 CSS = """
-#title { text-align: center; padding: 16px 0 4px; }
-#title h1 { color: #003366; font-size: 2.2em; margin: 0; }
-#subtitle { text-align: center; color: #666; margin-bottom: 16px; }
 .gradio-container { max-width: 960px !important; }
-.card { background: #ffffff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.header {
+    background: linear-gradient(135deg, #2C7A4A, #1A5A3A);
+    padding: 20px 24px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    text-align: center;
+}
+.header h1 {
+    color: white;
+    margin: 0;
+    font-size: 2em;
+    font-weight: 700;
+}
+.header p {
+    color: rgba(255,255,255,0.8);
+    margin: 6px 0 0;
+    font-size: 1em;
+}
+.card {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
 footer { display: none; }
+.status-box {
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #f0f7f4;
+    border-left: 4px solid #2C7A4A;
+    font-size: 0.95em;
+    min-height: 24px;
+}
+.settings-section {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+.settings-section h3 {
+    margin-top: 0;
+    color: #2C7A4A;
+    border-bottom: 2px solid #E8F5E9;
+    padding-bottom: 8px;
+}
+.dark-mode {
+    background-color: #1a1a2e !important;
+    color: #e0e0e0 !important;
+}
+.dark-mode .settings-section,
+.dark-mode .card {
+    background: #16213e !important;
+    color: #e0e0e0 !important;
+}
+.dark-mode .status-box {
+    background: #1a2e1a !important;
+    color: #c0e0c0 !important;
+}
 """
 
 TIPS_MD = """
@@ -462,13 +796,33 @@ TIPS_MD = """
 - Include **lean protein** in every meal
 """
 
+HEADER_HTML = """
+<div class="header">
+    <h1>🍔 NutriSnap AI</h1>
+    <p>Snap. Identify. Track. Eat Better.</p>
+</div>
+"""
+
 
 def build_ui():
     """Build the complete Gradio interface."""
-    with gr.Blocks(css=CSS, title="NutriSnap AI", theme=gr.themes.Soft()) as demo:
+    config = load_config()
+    dark_mode_css = ""
+    if config.get("dark_mode"):
+        dark_mode_css = """
+        body, .gradio-container { background-color: #1a1a2e !important; color: #e0e0e0 !important; }
+        .gr-block, .gr-form, .gr-box { background-color: #16213e !important; color: #e0e0e0 !important; }
+        .gr-input, .gr-text-input, .gr-textbox textarea { background-color: #0f3460 !important; color: #e0e0e0 !important; border-color: #2C7A4A !important; }
+        .gr-button { border-color: #2C7A4A !important; }
+        """
+
+    full_css = CSS
+    if config.get("dark_mode"):
+        full_css += "\n" + dark_mode_css
+
+    with gr.Blocks(css=full_css, title="NutriSnap AI", theme=gr.themes.Soft()) as demo:
         # Header
-        gr.Markdown('<div id="title"><h1>NutriSnap AI</h1></div>', elem_id="title")
-        gr.Markdown('<div id="subtitle">AI-Powered Food Tracking & Nutrition Analysis</div>', elem_id="subtitle")
+        gr.HTML(HEADER_HTML)
 
         with gr.Tabs():
             # ---- Tab 1: Upload & Analyze ----
@@ -478,14 +832,30 @@ def build_ui():
                         input_image = gr.File(label="Upload Meal Photo", file_types=["image"],
                                                type="filepath")
                         analyze_btn = gr.Button("🔍 Analyze Food", variant="primary", size="lg")
+                        status_display = gr.Markdown(value="", elem_classes=["status-box"])
                     with gr.Column(scale=1):
                         output_image = gr.Image(label="Annotated Result", type="numpy")
                 with gr.Row():
                     output_md = gr.Markdown(value="Upload a photo and click **Analyze Food** to see results.")
 
+                # Manual calorie entry section
+                with gr.Row():
+                    gr.Markdown("---")
+                with gr.Row():
+                    gr.Markdown("#### ✏️ Manual Entry (if detection fails)")
+                with gr.Row():
+                    manual_food = gr.Textbox(label="Food name", placeholder="e.g. Chicken breast")
+                    manual_cal = gr.Number(label="Calories", value=0)
+                    manual_protein = gr.Number(label="Protein (g)", value=0)
+                    manual_carbs = gr.Number(label="Carbs (g)", value=0)
+                    manual_fat = gr.Number(label="Fat (g)", value=0)
+                with gr.Row():
+                    manual_log_btn = gr.Button("📝 Log Manual Entry", variant="secondary")
+                    manual_status = gr.Markdown("")
+
             # ---- Tab 2: Dashboard ----
             with gr.TabItem("📊 Dashboard"):
-                dash_stats = gr.Markdown()
+                dash_stats = gr.HTML()
                 with gr.Row():
                     chart_daily = gr.Plot(label="Daily Calories")
                     chart_macro = gr.Plot(label="Macro Distribution")
@@ -503,12 +873,99 @@ def build_ui():
             with gr.TabItem("💡 Nutrition Tips"):
                 gr.Markdown(TIPS_MD)
 
+            # ---- Tab 5: Settings ----
+            with gr.TabItem("⚙️ Settings"):
+                # USDA API Key section
+                with gr.Group():
+                    gr.Markdown("### 🔑 USDA FoodData Central API")
+                    gr.Markdown("Get a free API key at [data.nal.usda.gov](https://fdc.nal.usda.gov/api-key-signup.html)")
+                    with gr.Row():
+                        usda_key_input = gr.Textbox(
+                            label="USDA API Key",
+                            type="password",
+                            value=config.get("usda_api_key", ""),
+                            placeholder="Enter your USDA API key..."
+                        )
+                    with gr.Row():
+                        test_conn_btn = gr.Button("🔌 Test Connection")
+                        save_key_btn = gr.Button("💾 Save Key")
+                    conn_status = gr.Markdown("")
+
+                # Cache management section
+                with gr.Group():
+                    gr.Markdown("### 🗃️ Cache Management")
+                    cache_info = gr.Markdown(f"Cached items: **{get_cache_size()}**")
+                    clear_cache_btn = gr.Button("🗑️ Clear Cache")
+                    cache_status = gr.Markdown("")
+
+                # Export data section
+                with gr.Group():
+                    gr.Markdown("### 📤 Export Data")
+                    with gr.Row():
+                        export_csv_btn = gr.Button("📊 Export CSV")
+                        export_pdf_btn = gr.Button("📄 Export PDF")
+                    export_status = gr.Markdown("")
+                    export_file = gr.File(label="Download", visible=False)
+
+                # Dark mode toggle
+                with gr.Group():
+                    gr.Markdown("### 🎨 Appearance")
+                    dark_mode_toggle = gr.Checkbox(
+                        label="Enable Dark Mode",
+                        value=config.get("dark_mode", False)
+                    )
+                    dark_mode_status = gr.Markdown("")
+
         # ---- Event Handlers ----
         def on_analyze(file):
             if file is None:
-                return None, "Please upload an image first.", None
-            annotated, summary, detections = analyze_image(file)
-            return annotated, summary
+                return None, "Please upload an image first.", ""
+            status_msgs = []
+            def collect_status(msg):
+                status_msgs.append(msg)
+            annotated, summary, detections = analyze_image(file, status_callback=collect_status)
+            status_text = "\n".join(status_msgs) if status_msgs else ""
+            return annotated, summary, status_text
+
+        def on_manual_log(food_name, cal, protein, carbs, fat):
+            if not food_name or not food_name.strip():
+                return "⚠️ Please enter a food name."
+            food_name = food_name.strip()
+            log_meal(food_name, cal, protein, carbs, fat, "Manual")
+            return f"✅ Logged: {food_name} - {cal} cal"
+
+        def on_test_connection(api_key):
+            return test_usda_connection(api_key)
+
+        def on_save_key(api_key):
+            cfg = load_config()
+            cfg["usda_api_key"] = api_key.strip() if api_key else ""
+            if save_config(cfg):
+                return "💾 API key saved successfully."
+            return "❌ Failed to save API key."
+
+        def on_clear_cache():
+            result = clear_cache()
+            return result, f"Cached items: **{get_cache_size()}**"
+
+        def on_export_csv():
+            path = export_csv_file()
+            if path:
+                return "✅ CSV file ready for download.", gr.update(value=path, visible=True)
+            return "⚠️ No meal log data to export.", gr.update(visible=False)
+
+        def on_export_pdf():
+            return ("ℹ️ PDF export requires the `reportlab` package. "
+                    "Install it with: `pip install reportlab`. "
+                    "For now, use the CSV export option."), gr.update(visible=False)
+
+        def on_dark_mode_change(enabled):
+            cfg = load_config()
+            cfg["dark_mode"] = enabled
+            save_config(cfg)
+            if enabled:
+                return "🌙 Dark mode enabled. Restart the app for full effect."
+            return "☀️ Light mode enabled. Restart the app for full effect."
 
         def on_refresh_dashboard():
             return build_dashboard()
@@ -516,13 +973,23 @@ def build_ui():
         def on_refresh_log():
             return read_log()
 
+        # Wire up events
         analyze_btn.click(fn=on_analyze, inputs=[input_image],
-                          outputs=[output_image, output_md])
+                          outputs=[output_image, output_md, status_display])
+        manual_log_btn.click(fn=on_manual_log,
+                             inputs=[manual_food, manual_cal, manual_protein, manual_carbs, manual_fat],
+                             outputs=[manual_status])
         refresh_btn.click(fn=on_refresh_dashboard,
                           outputs=[chart_daily, chart_macro, chart_weekly, chart_top, dash_stats])
         log_refresh.click(fn=on_refresh_log, outputs=[log_table])
+        test_conn_btn.click(fn=on_test_connection, inputs=[usda_key_input], outputs=[conn_status])
+        save_key_btn.click(fn=on_save_key, inputs=[usda_key_input], outputs=[conn_status])
+        clear_cache_btn.click(fn=on_clear_cache, outputs=[cache_status, cache_info])
+        export_csv_btn.click(fn=on_export_csv, outputs=[export_status, export_file])
+        export_pdf_btn.click(fn=on_export_pdf, outputs=[export_status, export_file])
+        dark_mode_toggle.change(fn=on_dark_mode_change, inputs=[dark_mode_toggle], outputs=[dark_mode_status])
 
-        # Load dashboard on tab select
+        # Load data on startup
         demo.load(fn=on_refresh_dashboard,
                  outputs=[chart_daily, chart_macro, chart_weekly, chart_top, dash_stats])
         demo.load(fn=on_refresh_log, outputs=[log_table])
@@ -530,9 +997,9 @@ def build_ui():
     return demo
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
+# ============================================
+# MAIN
+# ============================================
 
 if __name__ == "__main__":
     print("[NutriSnap] Loading models...")
