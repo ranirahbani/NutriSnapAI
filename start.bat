@@ -126,19 +126,7 @@ echo   %GREEN%[ ok ]%RESET% All dependencies installed successfully
 REM Show installed packages
 echo.
 echo   %ACCENT%[info]%RESET% Installed packages:
-for /f "usebackq delims=" %%L in ("requirements.txt") do (
-    set "line=%%L"
-    if not "!line:~0,1!"=="#" if not "!line!"=="" (
-        for /f "tokens=1 delims=>=<!" %%p in ("!line!") do set "pkg=%%p"
-        for /f "tokens=2 delims=: " %%v in ('pip show !pkg! 2^>nul ^| findstr "^Version:"') do set "pkgver=%%v"
-        if defined pkgver (
-            echo     %ACCENT%*%RESET% !pkg! %FAINT%!pkgver!%RESET%
-        ) else (
-            echo     %ACCENT%*%RESET% !pkg! %FAINT%(installed)%RESET%
-        )
-        set "pkgver="
-    )
-)
+pip list --format=columns 2>nul | findstr /V "^Package " | findstr /V "^---" | findstr /V "^pip " | findstr /V "^setuptools "
 
 REM ── Step 6 — Launch the app ────────────────────────────────────────────────
 echo.
