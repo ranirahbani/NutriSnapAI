@@ -60,13 +60,14 @@ You should see something like `Python 3.11.5`. If not, see the [Troubleshooting]
 NutriSnap AI is a **food tracking application** that combines computer vision with nutrition databases to deliver automatic meal analysis from photos. Upload a picture of your plate and the app will:
 
 1. **Detect** individual food items using YOLOv8 object detection (10 COCO food classes)
-2. **Classify** foods using a HuggingFace Beit vision transformer as a fallback (`yvelos/beit-food-384`)
-3. **Estimate** portion sizes based on bounding box area relative to image size (Small / Medium / Large)
-4. **Look up** nutrition data through a 5-step fallback chain (cache → USDA API → Open Food Facts → local database → error)
-5. **Log** every meal with timestamps to a CSV file
-6. **Visualize** your eating patterns through an interactive dashboard with 4 charts and 3 summary cards
+2. **Classify** each detected region using a HuggingFace Beit vision transformer (`yvelos/beit-food-384`) as a second-stage classifier — refining YOLO's COCO labels with food-specific predictions
+3. **Scan** uncovered image regions with a sub-region grid to find missed items the initial detection overlooked
+4. **Count** individual items (e.g., "3 chicken wings", "Full pizza 8 slices") using bounding box area ratios and per-unit gram weights
+5. **Look up** nutrition data through a 5-step fallback chain (cache → USDA API → Open Food Facts → local database → error)
+6. **Log** meals on demand — nothing is auto-saved; you click **💾 Save Meal** when you're happy with the results
+7. **Visualize** your eating patterns through an interactive dashboard with 4 charts and 3 summary cards
 
-The app runs as a **Gradio web interface** by default, with a fully functional **fallback HTML/CSS/JS interface** that auto-activates if Gradio is unavailable or via the `--fallback` CLI flag.
+The app runs as a **full-screen Gradio web interface** by default, with a fully functional **fallback HTML/CSS/JS interface** that auto-activates if Gradio is unavailable or via the `--fallback` CLI flag.
 
 ---
 
@@ -162,17 +163,17 @@ The fallback HTML UI supports a full **dark mode** via CSS custom properties (`[
 
 | Tab | Icon | Description |
 |-----|------|-------------|
-| **Upload & Analyze** | 📸 | Drag-and-drop image upload zone with preview thumbnail, AI detection button, annotated results table with bounding boxes, cropped food thumbnail gallery, and a manual entry form (food name, calories, protein, carbs, fat) |
-| **Dashboard** | 📊 | 3 summary cards (Total Meals, Total Calories, Avg per Meal) + 4 interactive charts: daily calorie bar chart, macronutrient doughnut/pie chart, weekly calorie trend line, top 8 foods horizontal bar chart |
-| **Food Log** | 📋 | Sortable table of all logged meals with columns: Date, Time, Food, Calories, Protein, Carbs, Fat, Portion. Click column headers to sort. |
+| **Upload & Analyze** | 📸 | Drag-and-drop image upload zone with preview thumbnail, AI detection button, annotated results with bounding boxes (showing count + calories, e.g. "Chicken Wings x3 (210 cal)"), cropped food thumbnail gallery with 30% padding for context, a **💾 Save Meal** button (meals are NOT auto-saved), and a manual entry form (food name, calories, protein, carbs, fat) |
+| **Dashboard** | 📊 | 3 summary cards (Total Meals, Total Calories, Avg per Meal) + 4 interactive charts: daily calorie bar chart, macronutrient doughnut/pie chart, weekly calorie trend line, top 5 foods horizontal bar chart. Times display as HH:MM (no seconds). Numbers rounded to integers. |
+| **Food Log** | 📋 | Sortable table of all logged meals with columns: Date, Time (HH:MM format), Food, Calories, Protein, Carbs, Fat, Portion. Click column headers to sort. **🗑️ Delete Entry** button (per row, by index) and **🗑️ Clear All Log** button for managing entries. |
 | **Nutrition Tips** | 💡 | RDI reference tables (adult male/female), tracking best practices, dashboard interpretation guide, healthy eating reminders |
-| **Settings** | ⚙️ | USDA API key input with Test Connection & Save Key buttons, cache management (view count, clear), CSV export, dark mode toggle switch |
+| **Settings** | ⚙️ | USDA API key input with Test Connection & Save Key buttons, cache management (view count, clear), CSV export, PDF report export (HTML-based print-to-PDF), dark mode toggle switch |
 
 ### Fallback UI Extras
 
 The standalone HTML interface adds:
 - **Toast notifications** (success/error/info) with slide-in animation
-- **Loading spinner overlay** during API calls
+- **Loading spinner overlay** during API calls (JS properly passes through input values)
 - **CSS-based dark mode** with smooth transitions (persisted to `localStorage` + server config)
 - **Drag-and-drop zone** with hover/dragover visual feedback and image preview
 - **Responsive layout** — mobile-friendly with column-stacked forms below 600px
@@ -181,15 +182,58 @@ The standalone HTML interface adds:
 
 ## Features
 
-### Food Detection
+### Food Detection (3-Stage Pipeline)
 
 | Feature | Details |
 |---------|---------|
-| **YOLOv8 multi-food detection** | Uses `yolov8n.pt` (nano model) trained on the COCO dataset. Detects **10 food classes**: banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake. Confidence threshold > 0.25. |
-| **HuggingFace classifier fallback** | Uses [`yvelos/beit-food-384`](https://huggingface.co/yvelos/beit-food-384) Beit vision transformer. Activates when YOLO finds no food items in the image. Returns top-3 predictions matched against the local nutrition database. |
-| **Bounding box annotation** | Draws colored rectangles around detected foods with labels showing food name and calorie count. Uses an 8-color rotation palette. |
-| **Cropped food thumbnails** | Each detected food item is cropped from the image and resized to a 200×200 thumbnail. The Gradio UI displays these as an interactive gallery below the annotated image. |
-| **Portion estimation** | Calculates bounding box area relative to total image area: **Small** (< 5%, 0.5× multiplier), **Medium** (5–15%, 1.0×), **Large** (> 15%, 1.5×). Estimated grams = `typical_g × portion_multiplier`. |
+| **Stage 1 — YOLOv8 detection** | Uses `yolov8n.pt` (nano model) trained on the COCO dataset. Detects **10 food classes**: banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake. Confidence threshold > 0.25. Identifies **where** food is in the image. |
+| **Stage 2 — HuggingFace classifier refinement** | Uses [`yvelos/beit-food-384`](https://huggingface.co/yvelos/beit-food-384) Beit vision transformer as a **second-stage classifier** (not just a fallback). Each YOLO-detected crop is sent to the HF model to identify **what** the food actually is, returning top-3 predictions. Labels are resolved via `HF_TO_DB_MAP` (34 entries), direct DB match, or fuzzy matching. |
+| **Stage 3 — Sub-region grid scan** | When fewer than 3 items are detected, the image is divided into a grid (2×2, then 3×3) and uncovered regions are scanned with the HF classifier (confidence ≥ 0.3) to find missed food items. |
+| **Full-image fallback** | If all stages find nothing, the HF classifier runs on the full image as a last resort. |
+| **Bounding box annotation** | Draws colored rectangles around detected foods with labels showing count and calorie info (e.g., "Chicken Wings x3 (210 cal)"). Labels render above the box when there's room, otherwise inside. Uses an 8-color rotation palette. |
+| **Cropped food thumbnails** | Each detected food item is cropped from the image with **30% padding** around the bounding box for natural context, then resized to 200×200 thumbnails. The Gradio UI displays these in an interactive gallery. |
+
+### Quantity Estimation
+
+The app counts individual items based on food type and bounding box area ratio:
+
+| Food Type | Counting Logic |
+|-----------|---------------|
+| **Pizza** | Distinguishes single slice, 2 slices, half pizza (4 slices), full pizza (8 slices) based on area ratio thresholds |
+| **Chicken wings** | Counts 1–6 individual wings based on bbox area |
+| **Donuts, tacos** | Counts 1–3 individual items |
+| **Sushi** | Counts 2–8 pieces |
+| **Eggs** | Counts 1–3 eggs |
+| **Pancakes, waffles** | Counts 1–3 pancakes or 1–2 waffles |
+| **Fries, nachos** | Portion-based (Small/Medium/Large), not individually counted |
+| **Other items** | Default: 1 serving |
+
+**`UNIT_WEIGHTS` dictionary** — 100+ per-unit gram weights for countable foods, organized by category:
+
+| Category | Examples |
+|----------|----------|
+| **Proteins** | Chicken wings (30g/wing), drumstick (75g), breast (175g), nugget (18g), shrimp (10g), steak (225g), sausage (70g), bacon strip (8g), hot dog (50g) |
+| **Bread / Pastry** | Bread slice (30g), croissant (60g), donut (60g), muffin (115g), cookie (30g), pancake (75g), waffle (90g), bagel (100g), cupcake (65g) |
+| **Pizza / Italian** | Pizza slice (110g), ravioli (15g), mozzarella stick (28g), garlic bread (45g) |
+| **Mexican** | Taco (80g), burrito (250g), enchilada (150g), quesadilla (180g), nacho chip (8g), empanada (90g), churro (40g) |
+| **Asian** | Sushi piece (30g), dumpling (25g), spring roll (60g), egg roll (85g), samosa (50g), wonton (20g) |
+| **Breakfast** | Egg (50g), fried egg (55g), sausage patty (45g), hash brown (60g), french toast (65g) |
+| **Snacks / Sides** | Fries portion (130g), onion ring (15g), chicken tender (40g), corn on cob (150g) |
+| **Fruits** | Apple (180g), banana (120g), orange (150g), strawberry (12g), grape (5g), cherry (8g), blueberry (1.5g) |
+| **Desserts** | Ice cream scoop (70g), cake slice (100g), pie slice (125g), chocolate bar (40g), truffle (15g) |
+| **Sandwiches / Burgers** | Hamburger (200g), cheeseburger (220g), sandwich (180g), slider (85g), wrap (200g) |
+
+When a food has a unit weight, grams are calculated as `count × unit_weight`. For non-countable foods, the portion estimation (Small/Medium/Large based on bbox area ratio) with `typical_g × multiplier` is used instead.
+
+### Food Deduplication
+
+**`FOOD_HIERARCHY`** — 20 food family mappings resolve conflicts when both generic and specific items are detected:
+
+- Families: chicken, fish, potato, bread, pasta, rice, egg, pork, beef, shrimp, cake, pizza, sandwich, salad, soup, ice_cream, donut, taco, sushi
+- If a specific item (e.g., `chicken_wings`) and a generic item (e.g., `chicken`) overlap in the image (IoU > 0.2), the generic detection is removed in favor of the specific one
+- Same-food detections in non-overlapping regions are merged, combining counts and nutrition
+
+**`HF_TO_DB_MAP`** — 34-entry mapping from HuggingFace model output labels to `NUTRITION_DB` keys, with fuzzy matching fallback (threshold 0.6) for unmapped labels.
 
 ### Nutrition Data Sources (5-Step Fallback Chain)
 
@@ -198,15 +242,18 @@ The standalone HTML interface adds:
 | 1 | **JSON cache** | No | Previously looked-up foods stored in `nutrition_cache.json` with 7-day expiry |
 | 2 | **USDA FoodData Central API** | Yes | Primary nutrition source — queries `api.nal.usda.gov/fdc/v1/foods/search` with your free API key. Extracts calories (KCAL), protein, carbs (by difference), and total fat. |
 | 3 | **Open Food Facts API** | No | Community-driven food database — queries `world.openfoodfacts.org/cgi/search.pl`. Uses per-100g values for energy-kcal, proteins, carbohydrates, and fat. |
-| 4 | **Local nutrition database** | No | Built-in `NUTRITION_DB` dictionary with **58 foods** — each entry has calories, protein, carbs, fat (per 100g) and a `typical_g` serving weight |
-| 5 | **Error** | — | Returns `None` with a status message if all sources fail |
+| 4 | **Local nutrition database** | No | Built-in `NUTRITION_DB` dictionary with **65 foods** — each entry has calories, protein, carbs, fat (per 100g) and a `typical_g` serving weight |
+| 5 | **Error** | – | Returns `None` with a status message if all sources fail |
 
 ### Meal Logging & Data Management
 
-- **CSV meal logging** — Every analyzed or manually entered meal is appended to `meal_log.csv` with columns: `Date`, `Time`, `Food`, `Calories`, `Protein (g)`, `Carbs (g)`, `Fat (g)`, `Portion`, `Confirmed`
+- **No auto-save** — Meals are NOT automatically logged after analysis. You must click the **💾 Save Meal** button to save detected items to the CSV. This lets you review results before committing.
+- **CSV meal logging** — Saved meals are appended to `meal_log.csv` with columns: `Date`, `Time`, `Food`, `Calories`, `Protein (g)`, `Carbs (g)`, `Fat (g)`, `Portion`, `Confirmed`
+- **Manual entry** — Log food name, calories, protein, carbs, and fat without a photo. Available in both interfaces.
+- **Delete entries** — The Food Log tab provides **🗑️ Delete Entry** (by row index, 0-based) and **🗑️ Clear All Log** buttons for managing logged meals.
 - **JSON nutrition cache** — Successful API lookups are cached in `nutrition_cache.json` with ISO timestamps and auto-expire after 7 days
 - **CSV export** — Download the full meal log CSV from the Settings tab (Gradio: file download widget; Fallback: direct file download via `/api/export/csv`)
-- **HTML meal report export** — Generates a styled HTML meal report (`meal_report.html`) from the 10 most recent log entries. Open in any browser and use **Print → Save as PDF** for a PDF copy. No external dependencies needed (replaces the earlier `reportlab` stub).
+- **HTML meal report export** — Generates a styled HTML meal report (`meal_report.html`) from the 10 most recent log entries. Open in any browser and use **Print → Save as PDF** for a PDF copy. No external dependencies needed.
 
 ### Dashboard & Analytics
 
@@ -216,23 +263,29 @@ The standalone HTML interface adds:
 |-------|------|------|
 | Daily Calorie Intake | Bar chart | Sum of calories grouped by date |
 | Macronutrient Distribution | Pie / Doughnut | Total protein (g), carbs (g), fat (g) across all meals |
-| Weekly Calorie Trend | Line chart (area fill) | Calories resampled by week (`W` frequency) |
-| Top Foods Eaten | Horizontal bar chart | Top 8 most frequently logged foods |
+| Weekly Calorie Trend | Line chart (area fill) | Calories resampled by week (`w` frequency) |
+| Top 5 Foods Eaten | Horizontal bar chart | Top 5 most frequently logged foods |
 
 **3 summary cards:**
 - **Total Meals** — count of all logged entries
 - **Total Calories** — sum of all calories consumed
 - **Avg per Meal** — mean calories per logged meal
 
+**Dashboard formatting:**
+- Times display as HH:MM only (no seconds/milliseconds)
+- Numbers rounded to integers for clean display
+- Time column in food log also truncated to HH:MM
+
 ### User Interface Features
 
+- **Full-screen Gradio UI** — No max-width constraint; edge-to-edge layout via CSS overrides (`max-width: 100% !important`)
 - **Dark mode toggle** — Persisted in `nutri_config.json` (Gradio) and `localStorage` (fallback UI). Applies CSS class overrides **live without restart** in Gradio via injected JS (`document.body.classList.add('dark-mode')`). Applies instantly in the fallback UI via CSS custom properties.
-- **Manual calorie/nutrition entry** — Log food name, calories, protein, carbs, and fat without a photo. Available in both the Gradio and fallback interfaces.
-- **Loading spinner overlay** — A loading spinner with "Analyzing your meal…" text displays during image analysis in both Gradio (triggered via JS on button click, hidden on output change) and the fallback UI (shown during API calls).
+- **Annotation labels** — Bounding boxes display count and calorie info (e.g., "Chicken Wings x3 (210 cal)"). Labels render above the box when there's room, or inside the box when space is tight.
+- **Loading spinner overlay** — A loading spinner with "Analyzing your meal…" text displays during image analysis in both Gradio (triggered via JS on button click, hidden on output change) and the fallback UI (shown during API calls). The JS properly passes through input values.
 - **Settings tab** — USDA API key management with connection testing, nutrition cache size display and clearing, data export
 - **`--fallback` CLI flag** — Force the HTML/CSS/JS interface even if Gradio is available
 - **Auto-fallback** — Automatically switches to the HTML interface if Gradio import fails at startup
-- **REST API backend** — The fallback server exposes full REST endpoints for all app operations (see [API Endpoints](#api-endpoints-fallback-server))
+- **REST API backend** — The fallback server exposes REST endpoints for all app operations (see [API Endpoints](#api-endpoints-fallback-server))
 
 ---
 
@@ -246,7 +299,7 @@ The standalone HTML interface adds:
 | **Deep Learning** | PyTorch, TorchVision |
 | **Image Processing** | OpenCV (`opencv-python-headless`), Pillow (PIL) |
 | **Data Processing** | Pandas, NumPy |
-| **Web UI (Primary)** | Gradio (Blocks API with Tabs, Soft theme) |
+| **Web UI (Primary)** | Gradio (Blocks API with Tabs, Soft theme, full-screen layout) |
 | **Web UI (Fallback)** | Standalone HTML/CSS/JS with Chart.js 4.4.1 |
 | **Charting (Gradio)** | Plotly (express + graph_objects), Matplotlib (Agg backend) |
 | **HTTP Server (Fallback)** | Python `http.server` stdlib (`HTTPServer`, `BaseHTTPRequestHandler`) |
@@ -336,6 +389,7 @@ The app stores settings in **`nutri_config.json`** (auto-created on first save):
 | `meal_log.csv` | All logged meals with timestamps and nutrition data | Yes, on first log |
 | `nutrition_cache.json` | Cached nutrition API responses with timestamps | Yes, on first API lookup |
 | `nutri_config.json` | User settings (API key, dark mode) | Yes, on first settings save |
+| `meal_report.html` | HTML meal report (generated on Export Report) | Yes, on export |
 | `yolov8n.pt` | YOLOv8 nano model weights | Yes, auto-downloaded by ultralytics |
 
 ---
@@ -348,7 +402,7 @@ The app stores settings in **`nutri_config.json`** (auto-created on first save):
 python app.py
 ```
 
-Launches the Gradio web interface with a **public share link** (`share=True`). The app loads YOLOv8n and the HuggingFace classifier on startup, then opens the browser. Dashboard and food log are loaded on startup via `demo.load()`.
+Launches the Gradio web interface with a **public share link** (`share=True`) and **full-screen edge-to-edge layout** (no max-width constraint). The app loads YOLOv8n and the HuggingFace classifier on startup, then opens the browser. Dashboard and food log are loaded on startup via `demo.load()`.
 
 ### Fallback Mode (HTML/CSS/JS)
 
@@ -363,18 +417,24 @@ Starts the built-in HTTP server on **port 7860** (`0.0.0.0`) serving the fallbac
 **📸 Upload & Analyze**
 1. Upload a meal photo (JPG, PNG, WEBP supported) via file picker or drag-and-drop
 2. Click **🔍 Analyze Food**
-3. View detected items with bounding boxes on the annotated image, cropped food thumbnails in the gallery, a nutrition summary table, and per-item lookup status messages
-4. If detection fails, use the **✏️ Manual Entry** form below to log food by name and nutrition values
+3. The 3-stage detection pipeline runs: YOLO detection → HF classifier refinement → sub-region scan
+4. View detected items with bounding boxes on the annotated image (labels show count + calories), cropped food thumbnails in the gallery, and a nutrition summary table
+5. **Review the results** — meals are NOT auto-saved
+6. Click **💾 Save Meal** to log the detected items to your food log
+7. If detection fails, use the **✏️ Manual Entry** form below to log food by name and nutrition values
 
 **📊 Dashboard**
 - Loads automatically on startup (Gradio) or on tab switch / **🔄 Refresh Dashboard** click (fallback)
 - Shows 3 summary cards and 4 interactive charts
 - Charts are Plotly-based in Gradio, Chart.js-based in the fallback UI
+- Times displayed as HH:MM, numbers rounded to integers
 
 **📋 Food Log**
 - Displays all logged meals in a data table
 - Click column headers to sort (fallback UI)
 - Click **🔄 Refresh Log** to reload data from CSV
+- Click **🗑️** button next to any row to delete that entry (by row index)
+- Click **🗑️ Clear All Log** to wipe all entries (with confirmation dialog in fallback UI)
 
 **💡 Nutrition Tips**
 - Reference guide with RDI tables for adult males and females
@@ -383,7 +443,7 @@ Starts the built-in HTTP server on **port 7860** (`0.0.0.0`) serving the fallbac
 **⚙️ Settings**
 - **USDA API Key:** Enter your key → click **🔌 Test Connection** → click **💾 Save Key**
 - **Cache Management:** View cached item count → click **🗑️ Clear Cache**
-- **Export Data:** Click **📊 Export CSV** to download the meal log; click **📄 Export Report** to generate an HTML meal report (open in browser → Print → Save as PDF)
+- **Export Data:** Click **📊 Export CSV** to download the meal log; click **📄 Export PDF Report** to generate an HTML meal report (open in browser → Print → Save as PDF)
 - **Appearance:** Toggle dark mode on/off
 
 ---
@@ -398,8 +458,8 @@ The terminal shows `[NutriSnap] Loading models...`. Two models are loaded (and d
 
 | Model | Size | Purpose |
 |-------|------|---------|
-| **YOLOv8n** (`yolov8n.pt`) | ~6 MB | Food detection — downloaded automatically by Ultralytics on first run |
-| **HuggingFace Beit** (`yvelos/beit-food-384`) | ~350 MB | Fallback food classifier — downloaded by Transformers on first run |
+| **YOLOv8n** (`yolov8n.pt`) | ~6 MB | Food detection (Stage 1) — downloaded automatically by Ultralytics on first run |
+| **HuggingFace Beit** (`yvelos/beit-food-384`) | ~350 MB | Second-stage food classifier (Stage 2) — downloaded by Transformers on first run |
 
 These are cached locally after the first download. Subsequent launches are much faster.
 
@@ -425,11 +485,13 @@ If Gradio fails to start for any reason (missing dependency, incompatible enviro
 2. Upload a clear photo of a meal
 3. Click **🔍 Analyze Food**
 4. The first analysis may take a few extra seconds while the HuggingFace model finishes loading
-5. You'll see bounding boxes around detected foods, a nutrition summary table, and cropped food thumbnails
+5. You'll see bounding boxes around detected foods with count/calorie labels, a nutrition summary table, and cropped food thumbnails
+6. **Review the results** — nothing is auto-saved
+7. Click **💾 Save Meal** to log the meal to your food log
 
 ### 5. Dashboard populates after your first meal
 
-The **📊 Dashboard** tab shows "No data yet" until you analyze at least one meal. After your first analysis (or manual entry), refresh the dashboard to see your calorie and macro charts.
+The **📊 Dashboard** tab shows "No data yet" until you save at least one meal. After saving your first analysis (or manual entry), refresh the dashboard to see your calorie and macro charts.
 
 ---
 
@@ -459,7 +521,7 @@ Food name (e.g. "pizza")
          ▼
 ┌──────────────────┐     YES
 │ 4. Local DB      │──────────► Return local data ⚠️
-│   (58 foods)     │           (per-100g × portion)
+│   (65 foods)     │           (per-100g × portion)
 └────────┬─────────┘
          │ NO
          ▼
@@ -473,6 +535,8 @@ Each step in the chain is reported to the user via status messages (e.g., `✅ U
 
 Nutrition values are scaled from per-100g to the estimated portion weight:  
 `actual_value = (per_100g_value × portion_grams) / 100`
+
+For countable items with `UNIT_WEIGHTS`, portion grams = `count × unit_weight` (e.g., 3 chicken wings × 30g = 90g).
 
 ---
 
@@ -494,11 +558,13 @@ The fallback HTTP server (port 7860) exposes the following REST API. All JSON en
 
 | Endpoint | Body | Description | Response |
 |----------|------|-------------|----------|
-| `POST /api/analyze` | `multipart/form-data` with `image` field | Runs the full detection pipeline on the uploaded image | `{ "items": [{ "food", "portion", "grams", "calories", "protein", "carbs", "fat", "confidence" }], "totals": { "calories", "protein", "carbs", "fat" }, "messages": [...] }` |
+| `POST /api/analyze` | `multipart/form-data` with `image` field | Runs the full 3-stage detection pipeline on the uploaded image. Returns 4-value result (annotated image, summary, detections, thumbnails). | `{ "items": [{ "food", "portion", "grams", "calories", "protein", "carbs", "fat", "confidence" }], "totals": { "calories", "protein", "carbs", "fat" }, "messages": [...] }` |
 | `POST /api/log/manual` | `{ "food", "calories", "protein", "carbs", "fat" }` | Logs a manual meal entry to CSV | `{ "success": true, "message": "Logged: ..." }` |
 | `POST /api/settings` | `{ "usda_api_key"?, "dark_mode"? }` | Saves settings to `nutri_config.json` | `{ "success": true, "message": "Settings saved." }` |
 | `POST /api/settings/test` | `{ "api_key" }` | Tests USDA API connection with a sample query ("apple") | `{ "success": bool, "message": "Connection successful! ..." }` |
-| `POST /api/cache/clear` | — | Deletes `nutrition_cache.json` | `{ "success": true, "message": "Cache cleared successfully." }` |
+| `POST /api/cache/clear` | – | Deletes `nutrition_cache.json` | `{ "success": true, "message": "Cache cleared successfully." }` |
+
+> **Note:** The fallback UI's Save Meal, Delete Entry, and Clear All buttons call `/api/log/save`, `/api/log/delete`, and `/api/log/clear` respectively. These endpoints are not yet implemented in the fallback server — the corresponding actions (save, delete, clear) are fully functional in the Gradio interface.
 
 ---
 
@@ -506,16 +572,22 @@ The fallback HTTP server (port 7860) exposes the following REST API. All JSON en
 
 ```
 NutriSnapAI/
-├── app.py                  # Main application (1624 lines)
-│                           #   Configuration, nutrition DB, API functions, cache system,
-│                           #   settings, AI detection, CSV logging, analysis pipeline,
-│                           #   dashboard generation, Gradio UI, fallback HTTP server, main entry
-├── fallback_ui.html        # Standalone HTML/CSS/JS fallback interface (819 lines)
+├── app.py                  # Main application (2355 lines)
+│                           #   Configuration, nutrition DB (65 foods), UNIT_WEIGHTS (100+ items),
+│                           #   FOOD_HIERARCHY (20 families), HF_TO_DB_MAP (34 entries),
+│                           #   fuzzy matching, API functions, cache system, settings,
+│                           #   AI detection (3-stage pipeline), quantity estimation,
+│                           #   deduplication, CSV logging (with delete/clear), analysis pipeline,
+│                           #   dashboard generation, Gradio UI (full-screen), fallback HTTP server,
+│                           #   main entry
+├── fallback_ui.html        # Standalone HTML/CSS/JS fallback interface (885 lines)
 │                           #   Complete UI with 5 tabs, Chart.js charts, dark mode,
-│                           #   drag-and-drop upload, toast notifications, REST API client
+│                           #   drag-and-drop upload, toast notifications, REST API client,
+│                           #   Save Meal / Delete Entry / Clear All buttons,
+│                           #   loading spinner with input passthrough
 ├── requirements.txt        # Python dependencies (12 packages)
-├── start.sh                # macOS/Linux startup script
-├── start.bat               # Windows startup script
+├── start.sh                # macOS/Linux startup script (154 lines)
+├── start.bat               # Windows startup script (142 lines, fixed — no broken package loop)
 ├── README.md               # This file
 ├── docs/
 │   └── images/
@@ -539,51 +611,77 @@ NutriSnapAI/
 
 | Section | Lines | Purpose |
 |---------|:-----:|---------|
-| **Imports & Config** | 1–46 | Module imports, constants (`CSV_FILE`, `CACHE_FILE`, `CONFIG_FILE`, `CACHE_EXPIRY_DAYS`), color theme tokens |
-| **Nutrition Database** | 48–118 | `NUTRITION_DB` dict (58 foods with per-100g macros + `typical_g`), `COCO_FOOD_CLASSES` mapping (10 COCO class IDs → food names) |
-| **Nutrition API Functions** | 120–186 | `search_usda_food()` — USDA FoodData Central query; `search_openfoodfacts()` — Open Food Facts query |
-| **Cache System** | 189–252 | `_load_cache()`, `_save_cache()`, `cache_nutrition()`, `get_cached_nutrition()`, `get_cache_size()`, `clear_cache()` |
-| **Settings Functions** | 255–296 | `load_config()`, `save_config()`, `test_usda_connection()`, `export_csv_file()` |
-| **AI Detection** | 298–334 | Global model vars, `load_yolo()`, `load_hf_classifier()` |
-| **CSV Logging** | 336–371 | `ensure_csv()`, `log_meal()`, `read_log()` |
-| **Analysis Pipeline** | 373–643 | `calculate_nutrition()` (5-step fallback chain), `estimate_portion()`, `detect_with_yolo()`, `classify_with_hf()`, `draw_annotations()`, `analyze_image()` (full pipeline: YOLO → HF → crop thumbnails → nutrition → annotation → summary) |
-| **Dashboard** | 645–710 | `build_dashboard()` — generates 4 Plotly figures + HTML summary cards from meal log |
-| **Gradio UI** | 712–1237 | `CSS` styles, `TIPS_MD` markdown, `HEADER_HTML`, `generate_meal_report()` (HTML export), `build_ui()` — 5-tab Gradio Blocks interface with all event handlers wired up |
-| **Fallback HTTP Server** | 1239–1598 | `parse_multipart()` (custom multipart parser, no deprecated cgi), `start_fallback_server()` — `HTTPServer` on port 7860 with `FallbackHandler` class implementing all REST API endpoints |
-| **Main Entry** | 1601–1624 | Loads models, checks `--fallback` flag, tries Gradio launch with auto-fallback to HTTP server |
+| **Imports & Config** | 1–51 | Module imports (incl. `difflib` for fuzzy matching), constants (`CSV_FILE`, `CACHE_FILE`, `CONFIG_FILE`, `CACHE_EXPIRY_DAYS`), color theme tokens, state variable for Save Meal |
+| **Nutrition Database** | 52–121 | `NUTRITION_DB` dict (65 foods with per-100g macros + `typical_g`) |
+| **Unit Weights** | 123–264 | `UNIT_WEIGHTS` dict (100+ per-unit gram weights across 10 categories) |
+| **Food Hierarchy** | 266–287 | `FOOD_HIERARCHY` dict (20 food families for deduplication) |
+| **COCO & HF Mapping** | 289–353 | `COCO_FOOD_CLASSES` (10 COCO class IDs → food names), `HF_TO_DB_MAP` (34 HF labels → DB keys), `fuzzy_match_food()` |
+| **Nutrition API Functions** | 355–421 | `search_usda_food()` — USDA FoodData Central query; `search_openfoodfacts()` — Open Food Facts query |
+| **Cache System** | 424–487 | `_load_cache()`, `_save_cache()`, `cache_nutrition()`, `get_cached_nutrition()`, `get_cache_size()`, `clear_cache()` |
+| **Settings Functions** | 490–531 | `load_config()`, `save_config()`, `test_usda_connection()`, `export_csv_file()` |
+| **AI Detection** | 533–568 | Global model vars, `load_yolo()`, `load_hf_classifier()` |
+| **CSV Logging** | 571–633 | `ensure_csv()`, `log_meal()`, `read_log()` (HH:MM time formatting), `delete_log_entry()`, `clear_all_log()` |
+| **Analysis Pipeline** | 636–1304 | `calculate_nutrition()` (5-step fallback chain), `estimate_portion()` (with fries-specific weights), `estimate_item_count()` (per-food counting logic), `deduplicate_results()`, `bbox_iou()`, `get_uncovered_regions()`, `_resolve_food_name()`, `detect_with_yolo()`, `classify_with_hf()`, `draw_annotations()` (count-aware labels), `analyze_image()` (full 3-stage pipeline: YOLO → HF refinement → sub-region scan → nutrition → dedup → annotation → thumbnails → summary) |
+| **Dashboard** | 1307–1373 | `build_dashboard()` — generates 4 Plotly figures + HTML summary cards from meal log. Top 5 foods chart. |
+| **Gradio UI** | 1376–1966 | `CSS` styles (full-screen layout, dark mode, spinner, gallery), `TIPS_MD` markdown, `HEADER_HTML`, `generate_meal_report()` (HTML export), `build_ui()` — 5-tab Gradio Blocks interface with all event handlers (analyze, save meal, delete entry, clear all, manual log, dashboard refresh, export CSV/PDF, dark mode toggle) |
+| **Fallback HTTP Server** | 1969–2329 | `parse_multipart()` (custom multipart parser, no deprecated cgi), `start_fallback_server()` — `HTTPServer` on port 7860 with `FallbackHandler` class implementing REST API endpoints |
+| **Main Entry** | 2332–2355 | Loads models, checks `--fallback` flag, tries Gradio launch with auto-fallback to HTTP server |
 
 ### Visual Architecture
 
 ![Architecture Flow](docs/images/architecture_flow.png)
 
-### Detection Pipeline
+### Detection Pipeline (3-Stage)
 
 ```
 Input Image (JPG/PNG/WEBP)
     │
     ├─► Convert to NumPy (RGB + BGR for OpenCV)
     │
-    ├─► YOLOv8 Detection (COCO food classes, conf > 0.25)
-    │     │
-    │     ├─ Found items → use bounding boxes
-    │     │
-    │     └─ Nothing found ↓
+    ├─► Stage 1: YOLOv8 Detection (WHERE food is)
+    │     COCO food classes, conf > 0.25
+    │     Produces bounding boxes for detected food regions
     │
-    ├─► HuggingFace Beit Classifier (top-5 → match NUTRITION_DB → top 3)
-    │     │
-    │     ├─ Found matches → use full-image bounding box (10%–90%)
-    │     │
-    │     └─ Nothing found → "No food items detected"
+    ├─► Stage 2: HuggingFace Classifier Refinement (WHAT it is)
+    │     For each YOLO detection:
+    │       ├─ Crop the detected region
+    │       ├─ Run HF classifier (top-3 predictions)
+    │       ├─ Resolve label via HF_TO_DB_MAP → direct match → fuzzy match
+    │       └─ Use resolved label if found in NUTRITION_DB, else keep COCO label
     │
-    ├─► For each detected food:
-    │     ├─ estimate_portion(bbox) → Small/Medium/Large + multiplier
-    │     ├─ grams = typical_g × multiplier
-    │     ├─ calculate_nutrition(food, grams) → 5-step fallback chain
-    │     └─ log_meal() → append to CSV
+    ├─► Stage 3: Sub-Region Grid Scan (find MISSED items)
+    │     Only if < 3 items detected:
+    │       ├─ Divide image into grid (2×2, then 3×3)
+    │       ├─ Skip regions overlapping with existing YOLO detections
+    │       ├─ Run HF classifier on uncovered regions (conf ≥ 0.3)
+    │       └─ Add new foods that aren't duplicates of existing detections
     │
-    ├─► draw_annotations() → colored bounding boxes + labels
+    ├─► Full-Image Fallback (last resort)
+    │     If no detections at all:
+    │       └─ Run HF classifier on full image (top-3, match NUTRITION_DB)
     │
-    └─► Build markdown summary table with totals
+    ├─► Stage 4: Nutrition Calculation
+    │     For each detected food:
+    │       ├─ estimate_item_count() → count + description (e.g., "3 wings")
+    │       ├─ If food in UNIT_WEIGHTS: grams = count × unit_weight
+    │       ├─ Else: estimate_portion() → Small/Medium/Large + typical_g × multiplier
+    │       ├─ calculate_nutrition() → 5-step fallback chain
+    │       └─ Build result with food, count, grams, nutrition, portion label
+    │
+    ├─► Stage 4b: Deduplication
+    │     ├─ Remove generic items if specific variant overlaps (IoU > 0.2)
+    │     └─ Merge same-food detections (combine counts + nutrition)
+    │
+    ├─► Stage 5: Annotation & Thumbnails
+    │     ├─ draw_annotations() → colored boxes + count/calorie labels
+    │     │   Labels show: "Food x{count} ({cal} cal)" or "Food ({desc}) ({cal} cal)"
+    │     │   Labels render above box if room, otherwise inside
+    │     └─ Crop thumbnails with 30% padding → resize to 200×200
+    │
+    └─► Stage 6: Build Summary
+          ├─ Markdown table: Food | Quantity | Portion (g) | Calories | Protein | Carbs | Fat
+          ├─ Totals line
+          └─ Status messages from nutrition lookup chain
 ```
 
 ### Nutrition Pipeline
@@ -606,7 +704,7 @@ All dependencies are listed in `requirements.txt`:
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `gradio` | latest | Primary web UI framework — Blocks API with Tabs, file upload, plots, dataframes |
+| `gradio` | latest | Primary webUI framework — Blocks API with Tabs, file upload, plots, dataframes |
 | `torch` | latest | Deep learning backend — required by YOLOv8 and HuggingFace Transformers |
 | `torchvision` | latest | Image transforms and pretrained model support for PyTorch |
 | `transformers` | latest | HuggingFace library — loads `yvelos/beit-food-384` classifier and processor |
@@ -618,12 +716,6 @@ All dependencies are listed in `requirements.txt`:
 | `opencv-python-headless` | latest | Image processing — BGR conversion, bounding box drawing, text annotation (`cv2.rectangle`, `cv2.putText`) |
 | `requests` | ≥ 2.28.0 | HTTP client for USDA and Open Food Facts API calls |
 | `numpy` | latest | Array operations — image array handling, bounding box coordinate conversion |
-
-### Optional (not in requirements.txt)
-
-| Package | Purpose |
-|---------|---------|
-| `reportlab` | Legacy PDF export (no longer used — the app now generates HTML meal reports for browser-based print-to-PDF) |
 
 ---
 
@@ -760,7 +852,7 @@ The AI couldn't identify food in your image. Try:
 #### Dashboard is empty / shows "No data yet"
 
 - The dashboard requires at least one meal logged in `meal_log.csv`
-- Upload and analyze a meal photo (or use manual entry) first, then refresh the dashboard
+- Upload and analyze a meal photo (or use manual entry) first, **click Save Meal**, then refresh the dashboard
 
 #### USDA API key not working
 
@@ -770,7 +862,7 @@ The AI couldn't identify food in your image. Try:
   https://api.nal.usda.gov/fdc/v1/foods/search?api_key=YOUR_KEY&query=apple
   ```
 - **Rate limiting**: The USDA API has rate limits. The 7-day nutrition cache minimizes repeat queries.
-- **No API key**: The app works without one — it falls back to Open Food Facts (no key needed) and then the local database (58 foods).
+- **No API key**: The app works without one — it falls back to Open Food Facts (no key needed) and then the local database (65 foods).
 
 #### Dark mode not toggling properly
 

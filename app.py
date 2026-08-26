@@ -120,6 +120,172 @@ NUTRITION_DB = {
     "nachos": {"calories": 346, "protein": 9.0, "carbs": 36.0, "fat": 19.0, "typical_g": 200},
 }
 
+# Per-unit weights for countable food items (grams per unit)
+UNIT_WEIGHTS = {
+    # --- Proteins ---
+    "chicken_wings": 30,      # grams per wing
+    "chicken wings": 30,
+    "chicken_drumstick": 75,  # grams per drumstick
+    "drumstick": 75,
+    "chicken_breast": 175,    # grams per breast
+    "chicken_thigh": 110,     # grams per thigh
+    "chicken_nugget": 18,     # grams per nugget
+    "chicken_nuggets": 18,
+    "nugget": 18,
+    "nuggets": 18,
+    "meatball": 30,           # grams per meatball
+    "meatballs": 30,
+    "shrimp": 10,             # grams per shrimp
+    "prawns": 10,
+    "fish_fillet": 140,       # grams per fillet
+    "steak": 225,             # grams per steak
+    "lamb_chop": 100,         # grams per chop
+    "lamb chop": 100,
+    "pork_chop": 150,         # grams per chop
+    "pork chop": 150,
+    "sausage": 70,            # grams per sausage
+    "sausages": 70,
+    "bacon_strip": 8,         # grams per strip
+    "bacon": 8,
+    "hot_dog": 50,            # grams per hot dog
+    "hotdog": 50,
+    # --- Bread / Pastry ---
+    "bread_slice": 30,        # grams per slice
+    "bread": 30,
+    "croissant": 60,          # grams per croissant
+    "donut": 60,              # grams per donut
+    "donuts": 60,
+    "doughnut": 60,
+    "muffin": 115,            # grams per muffin
+    "cookie": 30,             # grams per cookie
+    "cookies": 30,
+    "biscuit": 15,            # grams per biscuit
+    "biscuits": 15,
+    "pancake": 75,            # grams per pancake
+    "pancakes": 75,
+    "waffle": 90,             # grams per waffle
+    "waffles": 90,
+    "bagel": 100,             # grams per bagel
+    "toast": 30,              # grams per slice of toast
+    "roll": 50,               # grams per roll
+    "dinner_roll": 50,
+    "cupcake": 65,            # grams per cupcake
+    "cupcakes": 65,
+    "macaron": 15,            # grams per macaron
+    "macarons": 15,
+    "brownie": 55,            # grams per brownie
+    "brownies": 55,
+    # --- Pizza / Italian ---
+    "pizza": 110,             # grams per slice
+    "pizza_slice": 110,
+    "ravioli": 15,            # grams per piece
+    "mozzarella_stick": 28,   # grams per stick
+    "mozzarella_sticks": 28,
+    "garlic_bread": 45,       # grams per piece
+    "bruschetta": 40,         # grams per piece
+    # --- Mexican ---
+    "taco": 80,               # grams per taco
+    "tacos": 80,
+    "burrito": 250,           # grams per burrito
+    "enchilada": 150,         # grams per enchilada
+    "enchiladas": 150,
+    "quesadilla": 180,        # grams per quesadilla
+    "nacho": 8,               # grams per nacho chip
+    "nachos": 8,
+    "empanada": 90,           # grams per empanada
+    "empanadas": 90,
+    "churro": 40,             # grams per churro
+    "churros": 40,
+    # --- Asian ---
+    "sushi": 30,              # grams per piece
+    "sushi_roll": 30,
+    "dumpling": 25,           # grams per dumpling
+    "dumplings": 25,
+    "spring_roll": 60,        # grams per spring roll
+    "spring_rolls": 60,
+    "egg_roll": 85,           # grams per egg roll
+    "egg_rolls": 85,
+    "dim_sum": 30,            # grams per piece
+    "gyoza": 25,              # grams per gyoza
+    "samosa": 50,             # grams per samosa
+    "samosas": 50,
+    "tempura": 30,            # grams per piece
+    "wonton": 20,             # grams per wonton
+    "wontons": 20,
+    # --- Breakfast ---
+    "egg": 50,                # grams per egg
+    "eggs": 50,
+    "boiled_egg": 50,
+    "fried_egg": 55,
+    "sausage_patty": 45,      # grams per patty
+    "hash_brown": 60,         # grams per hash brown
+    "hash_browns": 60,
+    "french_toast": 65,       # grams per slice
+    # --- Snacks / Sides ---
+    "fries": 130,             # grams per portion
+    "french_fries": 130,
+    "onion_ring": 15,         # grams per ring
+    "onion_rings": 15,
+    "chicken_tender": 40,     # grams per tender
+    "chicken_tenders": 40,
+    "jalapeno_popper": 25,    # grams per popper
+    "corn_on_cob": 150,       # grams per cob
+    "potato_wedge": 30,       # grams per wedge
+    "potato_wedges": 30,
+    # --- Fruits ---
+    "apple": 180,             # grams per apple
+    "banana": 120,            # grams per banana
+    "orange": 150,            # grams per orange
+    "strawberry": 12,         # grams per strawberry
+    "strawberries": 12,
+    "grape": 5,               # grams per grape
+    "grapes": 5,
+    "cherry": 8,              # grams per cherry
+    "cherries": 8,
+    "blueberry": 1.5,         # grams per blueberry
+    "blueberries": 1.5,
+    # --- Desserts ---
+    "ice_cream_scoop": 70,    # grams per scoop
+    "ice_cream": 70,
+    "cake_slice": 100,        # grams per slice
+    "cake": 100,
+    "pie_slice": 125,         # grams per slice
+    "chocolate_bar": 40,      # grams per bar
+    "truffle": 15,            # grams per truffle
+    "truffles": 15,
+    # --- Sandwiches / Burgers ---
+    "hamburger": 200,         # grams per burger
+    "burger": 200,
+    "cheeseburger": 220,      # grams per cheeseburger
+    "sandwich": 180,          # grams per sandwich
+    "slider": 85,             # grams per slider
+    "sliders": 85,
+    "wrap": 200,              # grams per wrap
+}
+
+# Food hierarchy for deduplication: generic -> [specific variants]
+FOOD_HIERARCHY = {
+    "chicken": ["chicken_wings", "chicken_drumstick", "chicken_breast", "chicken_thigh", "chicken_nuggets", "chicken_tenders", "fried_chicken", "chicken"],
+    "fish": ["salmon", "tuna", "fish_fillet", "grilled_fish", "fried_fish", "fish"],
+    "potato": ["fries", "french_fries", "hash_browns", "potato_wedges", "baked_potato", "mashed_potato", "potato"],
+    "bread": ["toast", "bread_slice", "garlic_bread", "baguette", "roll", "dinner_roll", "bread"],
+    "pasta": ["spaghetti", "penne", "ravioli", "lasagna", "fettuccine", "macaroni", "pasta"],
+    "rice": ["fried_rice", "white_rice", "brown_rice", "sushi_rice", "rice"],
+    "egg": ["fried_egg", "boiled_egg", "scrambled_eggs", "omelette", "eggs", "egg"],
+    "pork": ["pork_chop", "bacon", "ham", "pulled_pork", "pork"],
+    "beef": ["steak", "hamburger", "meatballs", "beef"],
+    "shrimp": ["prawns", "tempura_shrimp", "shrimp"],
+    "cake": ["cupcake", "cheesecake", "chocolate_cake", "cake_slice", "cake"],
+    "pizza": ["pizza_slice", "pepperoni_pizza", "margherita", "pizza"],
+    "sandwich": ["club_sandwich", "grilled_cheese", "blt", "sub", "sandwich"],
+    "salad": ["caesar_salad", "greek_salad", "garden_salad", "coleslaw", "salad"],
+    "soup": ["tomato_soup", "chicken_soup", "miso_soup", "chowder", "soup"],
+    "ice_cream": ["gelato", "frozen_yogurt", "sorbet", "ice_cream_scoop", "ice_cream"],
+    "donut": ["doughnut", "donuts", "donut"],
+    "taco": ["tacos", "taco"],
+    "sushi": ["sushi_roll", "nigiri", "sashimi", "maki", "sushi"],
+}
+
 # COCO class ID -> food name mapping (YOLOv8 trained on COCO)
 COCO_FOOD_CLASSES = {
     46: "banana", 47: "apple", 48: "sandwich", 49: "orange",
@@ -585,6 +751,191 @@ def estimate_portion(bbox, img_shape, food_name=""):
     return label, mult, grams
 
 
+def estimate_item_count(food_name, bbox, img_shape):
+    """
+    Estimate number of individual items based on food type and bbox size.
+    Returns (count, description) tuple.
+    """
+    img_area = img_shape[0] * img_shape[1]
+    bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+    area_ratio = bbox_area / img_area if img_area > 0 else 0.0
+    
+    food_lower = food_name.lower().replace(" ", "_")
+    
+    # Pizza: distinguish between slice vs full pizza
+    if food_lower in ["pizza"]:
+        if area_ratio > 0.4:  # Takes up most of image = full pizza
+            return 8, "Full pizza (8 slices)"
+        elif area_ratio > 0.2:  # Medium area = half pizza or 3-4 slices
+            return 4, "Half pizza (4 slices)"
+        elif area_ratio > 0.1:  # Smaller = 2-3 slices
+            return 2, "2 slices"
+        else:  # Small = single slice
+            return 1, "1 slice"
+    
+    # Chicken wings: count individual wings
+    elif food_lower in ["chicken_wings", "chicken wings"]:
+        if area_ratio > 0.35:
+            return 6, "6 wings"
+        elif area_ratio > 0.2:
+            return 4, "4 wings"
+        elif area_ratio > 0.1:
+            return 3, "3 wings"
+        elif area_ratio > 0.05:
+            return 2, "2 wings"
+        else:
+            return 1, "1 wing"
+    
+    # Fries: portion-based, not countable
+    elif food_lower in ["fries", "french_fries"]:
+        if area_ratio > 0.3:
+            return 1, "Large portion"
+        elif area_ratio > 0.15:
+            return 1, "Medium portion"
+        else:
+            return 1, "Small portion"
+    
+    # Donuts: count individual
+    elif food_lower in ["donut", "donuts"]:
+        if area_ratio > 0.3:
+            return 3, "3 donuts"
+        elif area_ratio > 0.15:
+            return 2, "2 donuts"
+        else:
+            return 1, "1 donut"
+    
+    # Tacos: count individual
+    elif food_lower in ["tacos", "taco"]:
+        if area_ratio > 0.3:
+            return 3, "3 tacos"
+        elif area_ratio > 0.15:
+            return 2, "2 tacos"
+        else:
+            return 1, "1 taco"
+    
+    # Sushi: count pieces
+    elif food_lower in ["sushi"]:
+        if area_ratio > 0.3:
+            return 8, "8 pieces"
+        elif area_ratio > 0.15:
+            return 6, "6 pieces"
+        elif area_ratio > 0.08:
+            return 4, "4 pieces"
+        else:
+            return 2, "2 pieces"
+    
+    # Eggs: count individual
+    elif food_lower in ["eggs", "egg"]:
+        if area_ratio > 0.2:
+            return 3, "3 eggs"
+        elif area_ratio > 0.1:
+            return 2, "2 eggs"
+        else:
+            return 1, "1 egg"
+    
+    # Pancakes/waffles: count individual
+    elif food_lower in ["pancakes"]:
+        if area_ratio > 0.25:
+            return 3, "3 pancakes"
+        elif area_ratio > 0.12:
+            return 2, "2 pancakes"
+        else:
+            return 1, "1 pancake"
+    
+    elif food_lower in ["waffles"]:
+        if area_ratio > 0.25:
+            return 2, "2 waffles"
+        else:
+            return 1, "1 waffle"
+    
+    # Nachos: usually a portion, not counted individually
+    elif food_lower in ["nachos"]:
+        if area_ratio > 0.3:
+            return 1, "Large portion"
+        elif area_ratio > 0.15:
+            return 1, "Medium portion"
+        else:
+            return 1, "Small portion"
+    
+    # Default: single item
+    else:
+        return 1, "1 serving"
+
+
+def deduplicate_results(results):
+    """
+    Merge duplicates and resolve hierarchy conflicts.
+    - If a specific item (chicken_wings) and generic (chicken) both detected
+      with overlapping bboxes, remove the generic one.
+    - If same food detected in multiple regions, merge into one entry
+      with combined count and nutrition.
+    """
+    if not results:
+        return results
+    
+    # Build reverse hierarchy: specific -> generic
+    specific_to_generic = {}
+    for generic, specifics in FOOD_HIERARCHY.items():
+        for specific in specifics:
+            if specific != generic:  # Don't map generic to itself
+                specific_to_generic[specific] = generic
+    
+    # Step 1: Remove generic items if a more specific version overlaps
+    filtered = []
+    for item in results:
+        food = item["food"].lower().replace(" ", "_")
+        is_generic = food in FOOD_HIERARCHY
+        
+        if is_generic:
+            # Check if any specific variant overlaps with this generic item
+            has_specific_overlap = False
+            for other in results:
+                if other is item:
+                    continue
+                other_food = other["food"].lower().replace(" ", "_")
+                # Check if other is a specific variant of this generic
+                if specific_to_generic.get(other_food) == food:
+                    # Check bbox overlap
+                    iou = bbox_iou(item["bbox"], other["bbox"])
+                    if iou > 0.2:  # Significant overlap
+                        has_specific_overlap = True
+                        break
+            
+            if has_specific_overlap:
+                # Skip this generic item, keep the specific one
+                continue
+        
+        filtered.append(item)
+    
+    # Step 2: Merge same food items (non-overlapping regions)
+    merged = {}
+    for item in filtered:
+        food_key = item["food"].lower().replace(" ", "_")
+        
+        if food_key in merged:
+            # Merge: add counts and nutrition
+            existing = merged[food_key]
+            existing["count"] = existing.get("count", 1) + item.get("count", 1)
+            existing["calories"] = existing.get("calories", 0) + item.get("calories", 0)
+            existing["protein"] = existing.get("protein", 0) + item.get("protein", 0)
+            existing["carbs"] = existing.get("carbs", 0) + item.get("carbs", 0)
+            existing["fat"] = existing.get("fat", 0) + item.get("fat", 0)
+            existing["grams"] = existing.get("grams", 0) + item.get("grams", 0)
+            # Keep the larger bbox for display
+            if item.get("bbox"):
+                existing_area = (existing["bbox"][2] - existing["bbox"][0]) * (existing["bbox"][3] - existing["bbox"][1])
+                new_area = (item["bbox"][2] - item["bbox"][0]) * (item["bbox"][3] - item["bbox"][1])
+                if new_area > existing_area:
+                    existing["bbox"] = item["bbox"]
+            # Combine descriptions
+            if item.get("count_description"):
+                existing["count_description"] = item["count_description"]
+        else:
+            merged[food_key] = item.copy()
+    
+    return list(merged.values())
+
+
 def bbox_iou(box_a, box_b):
     """Compute IoU between two bounding boxes [x1,y1,x2,y2]."""
     x1 = max(box_a[0], box_b[0])
@@ -702,17 +1053,43 @@ def classify_with_hf(image_input, top_k=3):
 def draw_annotations(image_np, detections):
     """Draw bounding boxes and labels on the image."""
     annotated = image_np.copy()
+    h_img, w_img = annotated.shape[:2]
     colors = [(44, 122, 74), (76, 175, 80), (129, 199, 132), (255, 165, 0),
               (0, 255, 255), (255, 0, 0), (128, 255, 0), (0, 128, 255)]
     for i, det in enumerate(detections):
         color = colors[i % len(colors)]
         x1, y1, x2, y2 = det["bbox"]
+        # Clamp coordinates to image bounds so drawing never goes off-screen
+        x1, y1 = max(0, int(x1)), max(0, int(y1))
+        x2, y2 = min(w_img, int(x2)), min(h_img, int(y2))
         cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
-        label = f"{det['food'].replace('_', ' ').title()} ({det.get('calories', '?')} cal)"
+        
+        # Build label with count information
+        food_name = det['food'].replace('_', ' ').title()
+        count = det.get('count', 1)
+        count_desc = det.get('count_description', '')
+        calories = det.get('calories', '?')
+        
+        # Format label: "Food x{count} ({cal} cal)" or "Food ({desc}) ({cal} cal)"
+        if count > 1 and count_desc:
+            label = f"{food_name} x{count} ({calories} cal)"
+        elif count_desc and count_desc not in ['1 serving', '1 slice', '1 wing', '1 donut', '1 taco', '1 egg', '1 pancake', '1 waffle']:
+            label = f"{food_name} ({count_desc}) ({calories} cal)"
+        else:
+            label = f"{food_name} ({calories} cal)"
+        
         font = cv2.FONT_HERSHEY_SIMPLEX
-        (tw, th), _ = cv2.getTextSize(label, font, 0.6, 2)
-        cv2.rectangle(annotated, (x1, y1 - th - 12), (x1 + tw + 6, y1), color, -1)
-        cv2.putText(annotated, label, (x1 + 3, y1 - 6), font, 0.6, (255, 255, 255), 2)
+        (tw, th_text), _ = cv2.getTextSize(label, font, 0.6, 2)
+        label_height = th_text + 12
+        # If there's room above the box, draw label above; otherwise draw inside
+        if y1 - label_height >= 0:
+            label_y_top = y1
+            label_y_bottom = y1 - label_height
+        else:
+            label_y_top = y1 + label_height
+            label_y_bottom = y1
+        cv2.rectangle(annotated, (x1, label_y_bottom), (x1 + tw + 6, label_y_top), color, -1)
+        cv2.putText(annotated, label, (x1 + 3, label_y_top - 6), font, 0.6, (255, 255, 255), 2)
     return annotated
 
 
@@ -828,18 +1205,28 @@ def analyze_image(image_path, status_callback=None):
     if status_callback:
         status_callback("🧮 Calculating nutrition...")
     results = []
-    total_cal, total_pro, total_carb, total_fat = 0, 0, 0, 0
     status_messages = []
 
     for det in detections:
         food = det["food"]
-        portion_label, portion_mult, fries_grams = estimate_portion(det["bbox"], img_shape, food_name=food)
-
-        if fries_grams is not None:
-            grams = fries_grams
+        food_key = food.lower().replace(" ", "_")
+        
+        # Estimate item count based on bbox size
+        count, count_description = estimate_item_count(food, det["bbox"], img_shape)
+        det["count"] = count
+        det["count_description"] = count_description
+        
+        # Calculate grams: use unit weight for countable items, otherwise portion estimation
+        if food_key in UNIT_WEIGHTS:
+            grams = count * UNIT_WEIGHTS[food_key]
+            portion_label = count_description
         else:
-            typical_g = NUTRITION_DB.get(food, {}).get("typical_g", 150)
-            grams = round(typical_g * portion_mult)
+            portion_label, portion_mult, fries_grams = estimate_portion(det["bbox"], img_shape, food_name=food)
+            if fries_grams is not None:
+                grams = fries_grams
+            else:
+                typical_g = NUTRITION_DB.get(food, {}).get("typical_g", 150)
+                grams = round(typical_g * portion_mult)
 
         nutr = calculate_nutrition(food, grams, status_callback=status_messages.append)
         if nutr:
@@ -850,11 +1237,17 @@ def analyze_image(image_path, status_callback=None):
         det["portion"] = portion_label
         det["grams"] = grams
         results.append(det)
-        total_cal += det.get("calories", 0)
-        total_pro += det.get("protein", 0)
-        total_carb += det.get("carbs", 0)
-        total_fat += det.get("fat", 0)
-        # Auto-save removed — use "Save Meal" button to log results
+
+    # ── Stage 4b: Deduplicate results ──────────────────────────────────────
+    results = deduplicate_results(results)
+    
+    # Calculate totals after deduplication
+    total_cal, total_pro, total_carb, total_fat = 0, 0, 0, 0
+    for r in results:
+        total_cal += r.get("calories", 0)
+        total_pro += r.get("protein", 0)
+        total_carb += r.get("carbs", 0)
+        total_fat += r.get("fat", 0)
 
     if status_callback:
         for msg in status_messages:
@@ -872,9 +1265,9 @@ def analyze_image(image_path, status_callback=None):
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(img_np.shape[1], x2), min(img_np.shape[0], y2)
         if x2 > x1 and y2 > y1:
-            # Add 20% padding around bounding box for natural-looking thumbnails
-            pad_x = int((x2 - x1) * 0.2)
-            pad_y = int((y2 - y1) * 0.2)
+            # Add 30% padding around bounding box for natural-looking thumbnails
+            pad_x = int((x2 - x1) * 0.3)
+            pad_y = int((y2 - y1) * 0.3)
             crop_y1 = max(0, y1 - pad_y)
             crop_y2 = min(img_np.shape[0], y2 + pad_y)
             crop_x1 = max(0, x1 - pad_x)
@@ -886,12 +1279,16 @@ def analyze_image(image_path, status_callback=None):
 
     # ── Stage 6: Build summary markdown ─────────────────────────────────────
     summary_lines = [f"### Detected {len(results)} food item(s)\n"]
-    summary_lines.append("| Food | Portion | Grams | Calories | Protein | Carbs | Fat |")
-    summary_lines.append("|------|---------|-------|----------|---------|-------|-----|")
+    summary_lines.append("| Food | Quantity | Portion (g) | Calories | Protein | Carbs | Fat |")
+    summary_lines.append("|------|----------|-------------|----------|---------|-------|-----|")
     for r in results:
         name = r["food"].replace("_", " ").title()
+        count = r.get('count', 1)
+        count_desc = r.get('count_description', r.get('portion', '1 serving'))
+        # Use count_description for quantity column if available
+        quantity = count_desc if count_desc else f"{count} item(s)"
         summary_lines.append(
-            f"| {name} | {r['portion']} | {r['grams']}g "
+            f"| {name} | {quantity} | {r['grams']}g "
             f"| {r['calories']} | {r['protein']}g | {r['carbs']}g | {r['fat']}g |"
         )
     summary_lines.append(f"\n**Totals: {round(total_cal, 1)} cal | "
@@ -1180,7 +1577,9 @@ def generate_meal_report(detections):
     total_cal, total_pro, total_carb, total_fat = 0, 0, 0, 0
     for det in detections:
         name = det.get("food", "").replace("_", " ").title()
-        portion = det.get("portion", "N/A")
+        count = det.get("count", 1)
+        count_desc = det.get("count_description", det.get("portion", "N/A"))
+        quantity = count_desc if count_desc else f"{count} item(s)"
         grams = det.get("grams", 0)
         cal = det.get("calories", 0)
         pro = det.get("protein", 0)
@@ -1191,7 +1590,7 @@ def generate_meal_report(detections):
         total_carb += carb
         total_fat += fat
         rows_html += (
-            f"<tr><td>{name}</td><td>{portion}</td><td>{grams}g</td>"
+            f"<tr><td>{name}</td><td>{quantity}</td><td>{grams}g</td>"
             f"<td>{cal}</td><td>{pro}g</td><td>{carb}g</td><td>{fat}g</td></tr>\n"
         )
     html = f"""<!DOCTYPE html>
@@ -1221,7 +1620,7 @@ def generate_meal_report(detections):
 </div>
 <h2>Detected Foods ({len(detections)} item(s))</h2>
 <table>
-<tr><th>Food</th><th>Portion</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr>
+<tr><th>Food</th><th>Quantity</th><th>Portion (g)</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr>
 {rows_html}
 </table>
 <div class="totals">
