@@ -142,6 +142,12 @@ while IFS= read -r line; do
     fi
 done < requirements.txt
 
+# ── Optional: Model Configuration ────────────────────────────────────────────
+# Uncomment to use a different YOLO model (default: yolov8s.pt)
+# export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
+# Uncomment to adjust detection confidence (default: 0.20)
+# export NUTRISNAP_YOLO_CONF="0.25"
+
 # ── Step 6 — Launch the app ──────────────────────────────────────────────────
 echo ""
 echo -e "  ${GREEN_BOLD}───────────────────────────────────────────────────────────────${RESET}"

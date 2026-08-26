@@ -128,6 +128,12 @@ echo.
 echo   %ACCENT%[info]%RESET% Installed packages:
 pip list --format=columns 2>nul | findstr /V "^Package " | findstr /V "^---" | findstr /V "^pip " | findstr /V "^setuptools "
 
+REM ── Optional: Model Configuration ─────────────────────────────────────────
+REM Uncomment to use a different YOLO model (default: yolov8s.pt)
+REM set NUTRISNAP_YOLO_MODEL=yolov8m.pt
+REM Uncomment to adjust detection confidence (default: 0.20)
+REM set NUTRISNAP_YOLO_CONF=0.25
+
 REM ── Step 6 — Launch the app ────────────────────────────────────────────────
 echo.
 echo   %GREEN_BOLD%---------------------------------------------------------------%RESET%

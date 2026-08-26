@@ -39,6 +39,10 @@ CACHE_FILE = "nutrition_cache.json"
 CONFIG_FILE = "nutri_config.json"
 CACHE_EXPIRY_DAYS = 7
 
+# YOLO model configuration (override via environment variables)
+YOLO_MODEL = os.environ.get("NUTRISNAP_YOLO_MODEL", "yolov8s.pt")
+YOLO_CONF_THRESHOLD = float(os.environ.get("NUTRISNAP_YOLO_CONF", "0.20"))
+
 # State: last analysis results for Save Meal button
 _last_analysis_results = None
 
@@ -284,6 +288,152 @@ FOOD_HIERARCHY = {
     "donut": ["doughnut", "donuts", "donut"],
     "taco": ["tacos", "taco"],
     "sushi": ["sushi_roll", "nigiri", "sashimi", "maki", "sushi"],
+}
+
+# Countable foods eligible for texture-based refinement
+COUNTABLE_FOODS = {
+    "chicken_wings", "chicken wings", "wings", "sushi", "donut", "donuts",
+    "tacos", "taco", "eggs", "egg", "nuggets", "chicken_nuggets",
+    "dumplings", "meatballs", "shrimp", "onion_rings", "spring_rolls"
+}
+
+# Maximum reasonable counts per food type
+MAX_COUNTS = {
+    "chicken_wings": 12, "chicken wings": 12, "wings": 12,
+    "sushi": 12, "donut": 6, "donuts": 6,
+    "tacos": 5, "taco": 5, "eggs": 6, "egg": 6,
+    "nuggets": 15, "chicken_nuggets": 15,
+    "dumplings": 10, "meatballs": 10,
+    "shrimp": 12, "onion_rings": 10, "spring_rolls": 6
+}
+
+# ============================================
+# COUNT RULES - Data-driven quantity estimation
+# Each entry: [(min_area_ratio, count, description, portion_grams), ...]
+# Ordered from largest to smallest threshold
+# ============================================
+COUNT_RULES = {
+    "pizza": [
+        (0.40, 8, "Full pizza (8 slices)", 880),
+        (0.20, 4, "Half pizza (4 slices)", 440),
+        (0.10, 2, "2 slices", 220),
+        (0.00, 1, "1 slice", 110),
+    ],
+    "chicken_wings": [
+        (0.35, 6, "6 wings", 180),
+        (0.20, 4, "4 wings", 120),
+        (0.10, 3, "3 wings", 90),
+        (0.05, 2, "2 wings", 60),
+        (0.00, 1, "1 wing", 30),
+    ],
+    "chicken wings": [
+        (0.35, 6, "6 wings", 180),
+        (0.20, 4, "4 wings", 120),
+        (0.10, 3, "3 wings", 90),
+        (0.05, 2, "2 wings", 60),
+        (0.00, 1, "1 wing", 30),
+    ],
+    "donut": [
+        (0.30, 3, "3 donuts", 180),
+        (0.15, 2, "2 donuts", 120),
+        (0.00, 1, "1 donut", 60),
+    ],
+    "donuts": [
+        (0.30, 3, "3 donuts", 180),
+        (0.15, 2, "2 donuts", 120),
+        (0.00, 1, "1 donut", 60),
+    ],
+    "sushi": [
+        (0.35, 8, "8 pieces", 240),
+        (0.20, 5, "5 pieces", 150),
+        (0.10, 3, "3 pieces", 90),
+        (0.00, 2, "2 pieces", 60),
+    ],
+    "tacos": [
+        (0.30, 3, "3 tacos", 240),
+        (0.15, 2, "2 tacos", 160),
+        (0.00, 1, "1 taco", 80),
+    ],
+    "taco": [
+        (0.30, 3, "3 tacos", 240),
+        (0.15, 2, "2 tacos", 160),
+        (0.00, 1, "1 taco", 80),
+    ],
+    "eggs": [
+        (0.25, 4, "4 eggs", 200),
+        (0.15, 3, "3 eggs", 150),
+        (0.08, 2, "2 eggs", 100),
+        (0.00, 1, "1 egg", 50),
+    ],
+    "egg": [
+        (0.25, 4, "4 eggs", 200),
+        (0.15, 3, "3 eggs", 150),
+        (0.08, 2, "2 eggs", 100),
+        (0.00, 1, "1 egg", 50),
+    ],
+    "pancakes": [
+        (0.30, 4, "Stack of 4", 300),
+        (0.15, 3, "Stack of 3", 225),
+        (0.08, 2, "2 pancakes", 150),
+        (0.00, 1, "1 pancake", 75),
+    ],
+    "waffles": [
+        (0.25, 3, "3 waffles", 270),
+        (0.12, 2, "2 waffles", 180),
+        (0.00, 1, "1 waffle", 90),
+    ],
+    "chicken_nuggets": [
+        (0.30, 10, "10 nuggets", 180),
+        (0.20, 8, "8 nuggets", 144),
+        (0.10, 5, "5 nuggets", 90),
+        (0.00, 3, "3 nuggets", 54),
+    ],
+    "nuggets": [
+        (0.30, 10, "10 nuggets", 180),
+        (0.20, 8, "8 nuggets", 144),
+        (0.10, 5, "5 nuggets", 90),
+        (0.00, 3, "3 nuggets", 54),
+    ],
+    "dumplings": [
+        (0.30, 8, "8 dumplings", 200),
+        (0.15, 5, "5 dumplings", 125),
+        (0.00, 3, "3 dumplings", 75),
+    ],
+    "spring_rolls": [
+        (0.25, 4, "4 spring rolls", 240),
+        (0.12, 2, "2 spring rolls", 120),
+        (0.00, 1, "1 spring roll", 60),
+    ],
+    "meatballs": [
+        (0.25, 6, "6 meatballs", 180),
+        (0.12, 4, "4 meatballs", 120),
+        (0.00, 2, "2 meatballs", 60),
+    ],
+    "shrimp": [
+        (0.25, 8, "8 shrimp", 80),
+        (0.12, 5, "5 shrimp", 50),
+        (0.00, 3, "3 shrimp", 30),
+    ],
+    "onion_rings": [
+        (0.25, 8, "8 onion rings", 120),
+        (0.12, 5, "5 onion rings", 75),
+        (0.00, 3, "3 onion rings", 45),
+    ],
+}
+
+# Portion-based foods (not individually countable)
+PORTION_RULES = {
+    "fries": [(0.30, "Large portion", 180), (0.15, "Medium portion", 130), (0.00, "Small portion", 80)],
+    "french_fries": [(0.30, "Large portion", 180), (0.15, "Medium portion", 130), (0.00, "Small portion", 80)],
+    "nachos": [(0.30, "Large portion", 300), (0.15, "Medium portion", 200), (0.00, "Small portion", 120)],
+    "rice": [(0.25, "Large serving", 300), (0.12, "Medium serving", 200), (0.00, "Small serving", 100)],
+    "fried_rice": [(0.25, "Large serving", 300), (0.12, "Medium serving", 200), (0.00, "Small serving", 100)],
+    "salad": [(0.30, "Large bowl", 250), (0.15, "Medium bowl", 150), (0.00, "Side salad", 80)],
+    "pasta": [(0.30, "Large plate", 300), (0.15, "Medium plate", 200), (0.00, "Small plate", 130)],
+    "spaghetti": [(0.30, "Large plate", 300), (0.15, "Medium plate", 200), (0.00, "Small plate", 130)],
+    "soup": [(0.25, "Large bowl", 400), (0.12, "Medium bowl", 250), (0.00, "Cup", 150)],
+    "steak": [(0.30, "Large steak", 350), (0.15, "Medium steak", 225), (0.00, "Small steak", 150)],
+    "salmon": [(0.25, "Large fillet", 250), (0.12, "Medium fillet", 170), (0.00, "Small fillet", 110)],
 }
 
 # COCO class ID -> food name mapping (YOLOv8 trained on COCO)
@@ -540,14 +690,23 @@ hf_processor = None
 
 
 def load_yolo():
-    """Load YOLOv8n model for food detection."""
+    """Load YOLOv8 model for food detection with fallback to yolov8n.pt."""
     global yolo_model
     try:
         from ultralytics import YOLO
-        yolo_model = YOLO("yolov8n.pt")
-        print("[NutriSnap] YOLOv8n loaded successfully")
+        yolo_model = YOLO(YOLO_MODEL)
+        print(f"[NutriSnap] {YOLO_MODEL} loaded successfully")
         return True
     except Exception as e:
+        if YOLO_MODEL != "yolov8n.pt":
+            print(f"[NutriSnap] {YOLO_MODEL} failed ({e}), falling back to yolov8n.pt")
+            try:
+                from ultralytics import YOLO
+                yolo_model = YOLO("yolov8n.pt")
+                print("[NutriSnap] yolov8n.pt loaded as fallback")
+                return True
+            except Exception:
+                pass
         print(f"[NutriSnap] YOLO failed to load: {e}")
         return False
 
@@ -751,117 +910,110 @@ def estimate_portion(bbox, img_shape, food_name=""):
     return label, mult, grams
 
 
-def estimate_item_count(food_name, bbox, img_shape):
-    """
-    Estimate number of individual items based on food type and bbox size.
-    Returns (count, description, portion_grams) tuple.
-    portion_grams is non-None only for portion-based foods (fries, nachos)
-    where grams vary by portion size instead of item count.
-    """
+def enhanced_count_from_texture(food_name, bbox, image_bgr):
+    """Use edge density within a bounding box to estimate item count for countable foods."""
+    key = food_name.lower().strip().replace(" ", "_")
+    if key not in COUNTABLE_FOODS:
+        return None
+
+    try:
+        x1, y1, x2, y2 = [int(c) for c in bbox]
+        crop = image_bgr[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        # Convert to grayscale, apply Canny edge detection
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        # Apply slight blur to reduce noise
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        edges = cv2.Canny(gray, 50, 150)
+
+        # Find external contours
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Filter by minimum area (2% of crop area)
+        crop_area = crop.shape[0] * crop.shape[1]
+        min_contour_area = crop_area * 0.02
+        significant_contours = [c for c in contours if cv2.contourArea(c) > min_contour_area]
+
+        contour_count = len(significant_contours)
+
+        # Clamp to reasonable range
+        max_for_food = MAX_COUNTS.get(key, 8)
+        return min(max(1, contour_count), max_for_food)
+    except Exception:
+        return None
+
+
+def _heuristic_count(food_name, bbox, img_shape):
+    """Pure heuristic count based on COUNT_RULES and area ratio."""
     img_area = img_shape[0] * img_shape[1]
-    bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-    area_ratio = bbox_area / img_area if img_area > 0 else 0.0
-    
-    food_lower = food_name.lower().replace(" ", "_")
-    
-    # Pizza: distinguish between slice vs full pizza
-    if food_lower in ["pizza"]:
-        if area_ratio > 0.4:  # Takes up most of image = full pizza
-            return 8, "Full pizza (8 slices)", None
-        elif area_ratio > 0.2:  # Medium area = half pizza or 3-4 slices
-            return 4, "Half pizza (4 slices)", None
-        elif area_ratio > 0.1:  # Smaller = 2-3 slices
-            return 2, "2 slices", None
-        else:  # Small = single slice
-            return 1, "1 slice", None
-    
-    # Chicken wings: count individual wings
-    elif food_lower in ["chicken_wings", "chicken wings"]:
-        if area_ratio > 0.35:
-            return 6, "6 wings", None
-        elif area_ratio > 0.2:
-            return 4, "4 wings", None
-        elif area_ratio > 0.1:
-            return 3, "3 wings", None
-        elif area_ratio > 0.05:
-            return 2, "2 wings", None
-        else:
-            return 1, "1 wing", None
-    
-    # Fries: portion-based, not countable — return portion-adjusted grams
-    elif food_lower in ["fries", "french_fries"]:
-        if area_ratio > 0.3:
-            return 1, "Large portion", 180
-        elif area_ratio > 0.15:
-            return 1, "Medium portion", 130
-        else:
-            return 1, "Small portion", 80
-    
-    # Donuts: count individual
-    elif food_lower in ["donut", "donuts"]:
-        if area_ratio > 0.3:
-            return 3, "3 donuts", None
-        elif area_ratio > 0.15:
-            return 2, "2 donuts", None
-        else:
-            return 1, "1 donut", None
-    
-    # Tacos: count individual
-    elif food_lower in ["tacos", "taco"]:
-        if area_ratio > 0.3:
-            return 3, "3 tacos", None
-        elif area_ratio > 0.15:
-            return 2, "2 tacos", None
-        else:
-            return 1, "1 taco", None
-    
-    # Sushi: count pieces
-    elif food_lower in ["sushi"]:
-        if area_ratio > 0.3:
-            return 8, "8 pieces", None
-        elif area_ratio > 0.15:
-            return 6, "6 pieces", None
-        elif area_ratio > 0.08:
-            return 4, "4 pieces", None
-        else:
-            return 2, "2 pieces", None
-    
-    # Eggs: count individual
-    elif food_lower in ["eggs", "egg"]:
-        if area_ratio > 0.2:
-            return 3, "3 eggs", None
-        elif area_ratio > 0.1:
-            return 2, "2 eggs", None
-        else:
-            return 1, "1 egg", None
-    
-    # Pancakes/waffles: count individual
-    elif food_lower in ["pancakes"]:
-        if area_ratio > 0.25:
-            return 3, "3 pancakes", None
-        elif area_ratio > 0.12:
-            return 2, "2 pancakes", None
-        else:
-            return 1, "1 pancake", None
-    
-    elif food_lower in ["waffles"]:
-        if area_ratio > 0.25:
-            return 2, "2 waffles", None
-        else:
-            return 1, "1 waffle", None
-    
-    # Nachos: usually a portion, not counted individually — return portion-adjusted grams
-    elif food_lower in ["nachos"]:
-        if area_ratio > 0.3:
-            return 1, "Large portion", 300
-        elif area_ratio > 0.15:
-            return 1, "Medium portion", 200
-        else:
-            return 1, "Small portion", 120
-    
-    # Default: single item
+    bbox_w = bbox[2] - bbox[0]
+    bbox_h = bbox[3] - bbox[1]
+    bbox_area = bbox_w * bbox_h
+    area_ratio = bbox_area / max(1, img_area)
+    aspect_ratio = bbox_w / max(1, bbox_h)
+
+    # Normalize food name for lookup
+    key = food_name.lower().strip().replace(" ", "_")
+
+    # Also try without trailing 's' and with trailing 's'
+    key_singular = key.rstrip("s") if key.endswith("s") and key not in ("fries", "eggs", "nachos") else key
+    key_plural = key + "s" if not key.endswith("s") else key
+
+    # Check countable rules (try key, singular, plural)
+    for lookup_key in (key, key_singular, key_plural):
+        if lookup_key in COUNT_RULES:
+            # Apply aspect-ratio correction for horizontally-spread items
+            effective_ratio = area_ratio
+            if aspect_ratio > 1.8 and lookup_key not in ("pizza", "pizza_slice"):
+                # Wide boxes suggest multiple items side-by-side
+                effective_ratio *= min(aspect_ratio / 1.5, 1.5)  # cap at 1.5x boost
+
+            for min_ratio, count, desc, grams in COUNT_RULES[lookup_key]:
+                if effective_ratio >= min_ratio:
+                    return count, desc, grams
+            # Fallback to last entry (smallest)
+            last = COUNT_RULES[lookup_key][-1]
+            return last[1], last[2], last[3]
+
+    # Check portion-based rules
+    for lookup_key in (key, key_singular, key_plural):
+        if lookup_key in PORTION_RULES:
+            for min_ratio, desc, grams in PORTION_RULES[lookup_key]:
+                if area_ratio >= min_ratio:
+                    return 1, desc, grams
+            last = PORTION_RULES[lookup_key][-1]
+            return 1, last[1], last[2]
+
+    # Default: single serving with area-based portion
+    if area_ratio > 0.20:
+        return 1, "Large serving", None
+    elif area_ratio >= 0.08:
+        return 1, "Medium serving", None
     else:
-        return 1, "1 serving", None
+        return 1, "Small serving", None
+
+
+def estimate_item_count(food_name, bbox, img_shape, image_bgr=None):
+    """Estimate item count with optional texture-based refinement."""
+    count, desc, grams = _heuristic_count(food_name, bbox, img_shape)
+
+    # Texture-based refinement for countable foods
+    if image_bgr is not None:
+        texture_count = enhanced_count_from_texture(food_name, bbox, image_bgr)
+        if texture_count is not None and count > 0:
+            # Blend: 60% heuristic, 40% texture
+            blended = round(0.6 * count + 0.4 * texture_count)
+            blended = max(1, blended)
+            if blended != count:
+                # Recalculate grams proportionally
+                per_item_grams = (grams or 100) / max(1, count)
+                grams = round(blended * per_item_grams)
+                count = blended
+                desc = f"{blended} items (refined)"
+
+    return count, desc, grams
 
 
 def deduplicate_results(results):
@@ -1007,7 +1159,7 @@ def detect_with_yolo(image_np):
             for i in range(len(boxes)):
                 cls_id = int(boxes.cls[i].item())
                 conf = float(boxes.conf[i].item())
-                if cls_id in COCO_FOOD_CLASSES and conf > 0.25:
+                if cls_id in COCO_FOOD_CLASSES and conf > YOLO_CONF_THRESHOLD:
                     bbox = boxes.xyxy[i].cpu().numpy().astype(int).tolist()
                     food_name = COCO_FOOD_CLASSES[cls_id]
                     detections.append({
@@ -1152,10 +1304,15 @@ def analyze_image(image_path, status_callback=None):
             food_name = coco_name
 
         det["food"] = food_name
+        det["yolo_conf"] = det.get("confidence", 0)  # preserve YOLO confidence for skip logic
         detections.append(det)
 
     # ── Stage 3: Sub-region scan for missed items ────────────────────────────
-    if len(detections) < 3:
+    # Skip expensive sub-region scan if YOLO already detected multiple items with high confidence
+    high_conf_detections = sum(1 for r in detections if r.get("yolo_conf", 0) > 0.6)
+    skip_subregion = high_conf_detections >= 2
+
+    if not skip_subregion and len(detections) < 3:
         if status_callback:
             status_callback("🔍 Stage 3: Scanning for missed items...")
         existing_bboxes = [d["bbox"] for d in detections]
@@ -1220,7 +1377,7 @@ def analyze_image(image_path, status_callback=None):
         food_key = food.lower().replace(" ", "_")
         
         # Estimate item count based on bbox size
-        count, count_description, portion_grams = estimate_item_count(food, det["bbox"], img_shape)
+        count, count_description, portion_grams = estimate_item_count(food, det["bbox"], img_shape, image_bgr=img_bgr)
         det["count"] = count
         det["count_description"] = count_description
         
