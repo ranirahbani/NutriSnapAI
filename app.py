@@ -1,6 +1,6 @@
 """
 NutriSnap AI - Single-file food tracking application.
-Uses YOLOv8 for detection, HuggingFace classifier as fallback,
+Uses YOLOv8 for detection, HuggingFace classifier as second-stage refinement,
 Gradio for UI, Plotly/Matplotlib for dashboard charts.
 USDA & Open Food Facts APIs for nutrition data with local fallback.
 Run: python app.py
@@ -11,6 +11,7 @@ import csv
 import json
 import time
 import warnings
+import difflib
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -108,6 +109,12 @@ NUTRITION_DB = {
     "coconut": {"calories": 354, "protein": 3.3, "carbs": 15.0, "fat": 33.0, "typical_g": 100},
     "celery": {"calories": 16, "protein": 0.7, "carbs": 3.0, "fat": 0.2, "typical_g": 100},
     "cauliflower": {"calories": 25, "protein": 1.9, "carbs": 5.0, "fat": 0.3, "typical_g": 150},
+    "chicken_wings": {"calories": 203, "protein": 18.0, "carbs": 0.0, "fat": 14.0, "typical_g": 150},
+    "eggs": {"calories": 155, "protein": 13.0, "carbs": 1.1, "fat": 11.0, "typical_g": 100},
+    "pancakes": {"calories": 227, "protein": 6.0, "carbs": 28.0, "fat": 10.0, "typical_g": 150},
+    "waffles": {"calories": 291, "protein": 8.0, "carbs": 33.0, "fat": 14.0, "typical_g": 150},
+    "tacos": {"calories": 226, "protein": 10.0, "carbs": 20.0, "fat": 12.0, "typical_g": 180},
+    "nachos": {"calories": 346, "protein": 9.0, "carbs": 36.0, "fat": 19.0, "typical_g": 200},
 }
 
 # COCO class ID -> food name mapping (YOLOv8 trained on COCO)
@@ -116,6 +123,65 @@ COCO_FOOD_CLASSES = {
     50: "broccoli", 51: "carrot", 52: "hot_dog", 53: "pizza",
     54: "donut", 55: "cake",
 }
+
+# HuggingFace model output -> NUTRITION_DB key mapping
+HF_TO_DB_MAP = {
+    "french_fries": "fries",
+    "hamburger": "hamburger",
+    "cheeseburger": "hamburger",
+    "hot_dog": "hot_dog",
+    "pizza": "pizza",
+    "caesar_salad": "salad",
+    "greek_salad": "salad",
+    "grilled_salmon": "salmon",
+    "fried_rice": "rice",
+    "chicken_wings": "chicken_wings",
+    "ice_cream": "ice_cream",
+    "chocolate_cake": "cake",
+    "spaghetti_bolognese": "pasta",
+    "spaghetti_carbonara": "pasta",
+    "lasagna": "pasta",
+    "sushi": "sushi",
+    "steak": "steak",
+    "fried_chicken": "chicken",
+    "fish_and_chips": "fries",
+    "club_sandwich": "sandwich",
+    "pulled_pork_sandwich": "sandwich",
+    "lobster_bisque": "soup",
+    "miso_soup": "soup",
+    "omelette": "eggs",
+    "scrambled_eggs": "eggs",
+    "pancakes": "pancakes",
+    "waffles": "waffles",
+    "donuts": "donut",
+    "apple_pie": "cake",
+    "cheesecake": "cake",
+    "tacos": "tacos",
+    "nachos": "nachos",
+    "guacamole": "avocado",
+    "bread_pudding": "bread",
+    "garlic_bread": "bread",
+}
+
+
+def fuzzy_match_food(name, threshold=0.6):
+    """Try fuzzy matching a food name against NUTRITION_DB keys."""
+    name_clean = name.lower().strip().replace(" ", "_").replace("-", "_")
+    # Direct match first
+    if name_clean in NUTRITION_DB:
+        return name_clean
+    # Check HF map
+    if name_clean in HF_TO_DB_MAP:
+        return HF_TO_DB_MAP[name_clean]
+    # Fuzzy match against DB keys
+    matches = difflib.get_close_matches(name_clean, list(NUTRITION_DB.keys()), n=1, cutoff=threshold)
+    if matches:
+        return matches[0]
+    # Also try partial matching: if any DB key is a substring
+    for db_key in NUTRITION_DB:
+        if db_key in name_clean or name_clean in db_key:
+            return db_key
+    return name_clean
 
 # ============================================
 # NUTRITION API FUNCTIONS
@@ -450,18 +516,97 @@ def calculate_nutrition(food_name, grams, status_callback=None):
     return None
 
 
-def estimate_portion(bbox, img_shape):
-    """Estimate portion size from bounding box area relative to image."""
+def estimate_portion(bbox, img_shape, food_name=""):
+    """
+    Estimate portion size from bounding box area relative to image.
+    Returns (portion_label, portion_mult, grams_estimate).
+    Uses fries-specific weights when food_name contains 'fries'.
+    """
     x1, y1, x2, y2 = bbox
     box_area = (x2 - x1) * (y2 - y1)
     img_area = img_shape[0] * img_shape[1]
-    ratio = box_area / img_area
-    if ratio < 0.05:
-        return "Small", 0.5
-    elif ratio < 0.15:
-        return "Medium", 1.0
+    ratio = box_area / img_area if img_area > 0 else 0.0
+
+    is_fries = "fries" in food_name.lower() if food_name else False
+
+    if ratio > 0.20:
+        label = "Large portion"
+        if is_fries:
+            grams = 180
+        else:
+            grams = None  # will use typical_g * 1.5
+        mult = 1.5
+    elif ratio >= 0.08:
+        label = "Medium portion"
+        if is_fries:
+            grams = 130
+        else:
+            grams = None
+        mult = 1.0
     else:
-        return "Large", 1.5
+        label = "Small portion"
+        if is_fries:
+            grams = 80
+        else:
+            grams = None
+        mult = 0.5
+
+    return label, mult, grams
+
+
+def bbox_iou(box_a, box_b):
+    """Compute IoU between two bounding boxes [x1,y1,x2,y2]."""
+    x1 = max(box_a[0], box_b[0])
+    y1 = max(box_a[1], box_b[1])
+    x2 = min(box_a[2], box_b[2])
+    y2 = min(box_a[3], box_b[3])
+    inter = max(0, x2 - x1) * max(0, y2 - y1)
+    area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
+    area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def get_uncovered_regions(img_shape, existing_bboxes, grid=(3, 3), overlap_thresh=0.3):
+    """
+    Divide image into a grid and return regions not significantly overlapping
+    with existing YOLO detections.
+    Returns list of [x1, y1, x2, y2] regions.
+    """
+    h, w = img_shape[:2]
+    rows, cols = grid
+    cell_h = h // rows
+    cell_w = w // cols
+    uncovered = []
+    for r in range(rows):
+        for c in range(cols):
+            region = [c * cell_w, r * cell_h, (c + 1) * cell_w, (r + 1) * cell_h]
+            # Check if this region overlaps significantly with any existing detection
+            dominated = False
+            for det_box in existing_bboxes:
+                if bbox_iou(region, det_box) > overlap_thresh:
+                    dominated = True
+                    break
+            if not dominated:
+                uncovered.append(region)
+    return uncovered
+
+
+def _resolve_food_name(hf_label):
+    """
+    Map a raw HF classifier label to a NUTRITION_DB key using:
+    1. HF_TO_DB_MAP
+    2. Direct DB match
+    3. Fuzzy match
+    """
+    if not hf_label:
+        return None
+    label = hf_label.lower().strip().replace("-", "_").replace(" ", "_")
+    if label in HF_TO_DB_MAP:
+        return HF_TO_DB_MAP[label]
+    if label in NUTRITION_DB:
+        return label
+    return fuzzy_match_food(label)
 
 
 def detect_with_yolo(image_np):
@@ -492,27 +637,32 @@ def detect_with_yolo(image_np):
         return []
 
 
-def classify_with_hf(image_pil):
-    """Use HuggingFace classifier as fallback."""
+def classify_with_hf(image_input, top_k=3):
+    """
+    Use HuggingFace classifier on an image (file path string OR PIL Image).
+    Returns list of dicts with raw HF label + confidence:
+      [{"label": "hamburger", "confidence": 0.82}, ...]
+    """
     if hf_classifier is None or hf_processor is None:
         return []
     try:
         import torch
-        inputs = hf_processor(images=image_pil, return_tensors="pt")
+        if isinstance(image_input, str):
+            image_input = Image.open(image_input).convert("RGB")
+        elif not isinstance(image_input, Image.Image):
+            image_input = Image.fromarray(image_input).convert("RGB")
+        inputs = hf_processor(images=image_input, return_tensors="pt")
         with torch.no_grad():
             outputs = hf_classifier(**inputs)
         probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-        top5 = torch.topk(probs, 5, dim=-1)
+        topk = torch.topk(probs, min(top_k, probs.shape[-1]), dim=-1)
         results = []
-        for i in range(5):
-            idx = top5.indices[0][i].item()
-            score = top5.values[0][i].item()
+        for i in range(topk.indices.shape[1]):
+            idx = topk.indices[0][i].item()
+            score = topk.values[0][i].item()
             label = hf_classifier.config.id2label[idx].lower().replace("-", "_").replace(" ", "_")
-            for db_key in NUTRITION_DB:
-                if db_key in label or label in db_key:
-                    results.append({"food": db_key, "confidence": round(score, 2)})
-                    break
-        return results[:3] if results else []
+            results.append({"label": label, "confidence": round(score, 4)})
+        return results
     except Exception as e:
         print(f"[NutriSnap] HF classification error: {e}")
         return []
@@ -537,10 +687,12 @@ def draw_annotations(image_np, detections):
 
 def analyze_image(image_path, status_callback=None):
     """
-    Full analysis pipeline:
-    1. Try YOLOv8 for multi-food detection
-    2. If no foods found, try HuggingFace classifier
-    3. Calculate nutrition (via API chain), estimate portions, log results
+    Multi-stage food detection pipeline:
+      Stage 1: YOLO detection (WHERE food is)
+      Stage 2: HF classifier on each YOLO crop (WHAT it is)
+      Stage 3: Sub-region scan for missed items
+      Stage 4: Nutrition calculation & logging
+    Returns: (annotated_image, summary_text, results_list, thumbnails)
     """
     if status_callback:
         status_callback("📸 Loading image...")
@@ -548,29 +700,100 @@ def analyze_image(image_path, status_callback=None):
     img_pil = Image.open(image_path).convert("RGB")
     img_np = np.array(img_pil)
     img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-    img_shape = img_np.shape[:2]
+    img_shape = img_np.shape[:2]  # (h, w)
 
     if status_callback:
-        status_callback("🔍 Detecting food items...")
+        status_callback("🔍 Stage 1: YOLO detection...")
 
-    # Step 1: YOLO detection
-    detections = detect_with_yolo(img_bgr)
+    # ── Stage 1: YOLO detection ──────────────────────────────────────────────
+    yolo_detections = detect_with_yolo(img_bgr)
+    if status_callback:
+        status_callback(f"  YOLO found {len(yolo_detections)} item(s)")
 
-    # Step 2: Fallback to HF classifier
-    if not detections:
+    # ── Stage 2: Refine each YOLO box with HF classifier ─────────────────────
+    detections = []
+    if status_callback:
+        status_callback("🔍 Stage 2: Refining with AI classifier...")
+
+    for det in yolo_detections:
+        x1, y1, x2, y2 = det["bbox"]
+        # Clamp to image bounds
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(img_np.shape[1], x2), min(img_np.shape[0], y2)
+        coco_name = det["food"]
+
+        if x2 > x1 and y2 > y1:
+            crop_pil = img_pil.crop((x1, y1, x2, y2))
+            hf_results = classify_with_hf(crop_pil, top_k=3)
+            resolved = None
+            for hf_r in hf_results:
+                mapped = _resolve_food_name(hf_r["label"])
+                if mapped and mapped in NUTRITION_DB:
+                    resolved = mapped
+                    break
+            food_name = resolved if resolved else coco_name
+        else:
+            food_name = coco_name
+
+        det["food"] = food_name
+        detections.append(det)
+
+    # ── Stage 3: Sub-region scan for missed items ────────────────────────────
+    if len(detections) < 3:
         if status_callback:
-            status_callback("🔍 Trying AI classifier...")
-        hf_results = classify_with_hf(img_pil)
-        if hf_results:
-            h, w = img_shape
-            for r in hf_results:
-                r["bbox"] = [int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9)]
-            detections = hf_results
+            status_callback("🔍 Stage 3: Scanning for missed items...")
+        existing_bboxes = [d["bbox"] for d in detections]
+        # Try 2x2 grid first, then 3x3 if still few detections
+        for grid in [(2, 2), (3, 3)]:
+            uncovered = get_uncovered_regions(img_shape, existing_bboxes, grid=grid)
+            for region in uncovered:
+                x1, y1, x2, y2 = region
+                crop_pil = img_pil.crop((x1, y1, x2, y2))
+                hf_results = classify_with_hf(crop_pil, top_k=3)
+                for hf_r in hf_results:
+                    if hf_r["confidence"] < 0.3:
+                        continue
+                    mapped = _resolve_food_name(hf_r["label"])
+                    if not mapped or mapped not in NUTRITION_DB:
+                        continue
+                    # Avoid duplicate foods
+                    existing_foods = [d["food"] for d in detections]
+                    if mapped in existing_foods:
+                        continue
+                    detections.append({
+                        "food": mapped,
+                        "bbox": region,
+                        "confidence": round(hf_r["confidence"], 2),
+                        "source": "sub_region",
+                    })
+                    existing_bboxes.append(region)
+                    if status_callback:
+                        status_callback(f"  ➕ Detected: {mapped.replace('_', ' ').title()} (sub-region)")
+                    break  # one food per region
+            if len(detections) >= 3:
+                break
+
+    if not detections:
+        # Last resort: run HF on full image
+        if status_callback:
+            status_callback("🔍 Fallback: classifying full image...")
+        hf_results = classify_with_hf(img_pil, top_k=3)
+        for hf_r in hf_results:
+            mapped = _resolve_food_name(hf_r["label"])
+            if mapped and mapped in NUTRITION_DB:
+                h, w = img_shape
+                detections.append({
+                    "food": mapped,
+                    "bbox": [int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9)],
+                    "confidence": round(hf_r["confidence"], 2),
+                    "source": "full_image_hf",
+                })
+                break
 
     if not detections:
         return None, "No food items detected. Try a clearer photo of a meal.", None, []
 
-    # Step 3: Calculate nutrition and portions
+    # ── Stage 4: Calculate nutrition & portions ─────────────────────────────
     if status_callback:
         status_callback("🧮 Calculating nutrition...")
     results = []
@@ -579,9 +802,14 @@ def analyze_image(image_path, status_callback=None):
 
     for det in detections:
         food = det["food"]
-        portion_label, portion_mult = estimate_portion(det["bbox"], img_shape)
-        typical_g = NUTRITION_DB.get(food, {}).get("typical_g", 150)
-        grams = round(typical_g * portion_mult)
+        portion_label, portion_mult, fries_grams = estimate_portion(det["bbox"], img_shape, food_name=food)
+
+        if fries_grams is not None:
+            grams = fries_grams
+        else:
+            typical_g = NUTRITION_DB.get(food, {}).get("typical_g", 150)
+            grams = round(typical_g * portion_mult)
+
         nutr = calculate_nutrition(food, grams, status_callback=status_messages.append)
         if nutr:
             det.update(nutr)
@@ -598,27 +826,25 @@ def analyze_image(image_path, status_callback=None):
     if status_callback:
         for msg in status_messages:
             status_callback(msg)
-        status_callback("✅ Analysis complete!")
+        status_callback(f"✅ Analysis complete! Found {len(results)} item(s)")
 
-    # Step 4: Annotate image
+    # ── Stage 5: Annotate image ─────────────────────────────────────────────
     annotated = draw_annotations(img_bgr, results)
     annotated_rgb = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
 
-    # Step 4b: Crop each detected food item as individual thumbnail
+    # ── Stage 5b: Crop thumbnails ──────────────────────────────────────────
     cropped_thumbnails = []
     for det in results:
         x1, y1, x2, y2 = det["bbox"]
-        # Clamp coordinates to image bounds
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(img_np.shape[1], x2), min(img_np.shape[0], y2)
         if x2 > x1 and y2 > y1:
             crop = img_np[y1:y2, x1:x2].copy()
-            # Resize to a consistent thumbnail size (200x200)
             crop_resized = cv2.resize(crop, (200, 200), interpolation=cv2.INTER_CUBIC)
             label = det["food"].replace("_", " ").title()
             cropped_thumbnails.append((crop_resized, label))
 
-    # Step 5: Build summary markdown
+    # ── Stage 6: Build summary markdown ─────────────────────────────────────
     summary_lines = [f"### Detected {len(results)} food item(s)\n"]
     summary_lines.append("| Food | Portion | Grams | Calories | Protein | Carbs | Fat |")
     summary_lines.append("|------|---------|-------|----------|---------|-------|-----|")
@@ -713,12 +939,27 @@ def build_dashboard():
 # ============================================
 
 CSS = """
-.gradio-container { max-width: 960px !important; }
+.gradio-container {
+    max-width: 100% !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+.main {
+    max-width: 100% !important;
+    width: 100% !important;
+}
+.contain {
+    max-width: 100% !important;
+}
+.tabitem, .tab-nav + div {
+    padding: 0 24px !important;
+}
 .header {
     background: linear-gradient(135deg, #2C7A4A, #1A5A3A);
-    padding: 20px 24px;
-    border-radius: 12px;
-    margin-bottom: 16px;
+    padding: 24px 32px;
+    border-radius: 0;
+    margin-bottom: 0;
     text-align: center;
 }
 .header h1 {
