@@ -643,11 +643,25 @@ function renderResults(data) {
   html += '</div>';
 
   // ── Nutrition detail table ──
-  html += '<table class="results-table"><thead><tr><th>Food</th><th>Portion</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>';
-  data.items.forEach(it => {
-    html += `<tr><td>${it.food}</td><td>${it.portion}</td><td>${it.grams}g</td><td>${it.calories}</td><td>${it.protein}g</td><td>${it.carbs}g</td><td>${it.fat}g</td></tr>`;
+  html += '<table class="results-table"><thead><tr><th>Food</th><th>Portion</th><th>Qty</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>';
+  data.items.forEach((it, idx) => {
+    html += `<tr>
+      <td>${it.food}</td>
+      <td>${it.portion}</td>
+      <td><input type="number" class="qty-input" value="${it.quantity || 1}" min="1" max="99" data-idx="${idx}" style="width:50px;padding:4px;border:1px solid #ccc;border-radius:4px;text-align:center;"></td>
+      <td><input type="number" class="grams-input" value="${it.grams}" min="1" max="9999" data-idx="${idx}" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:4px;text-align:center;"></td>
+      <td class="cal-cell">${it.calories}</td>
+      <td class="pro-cell">${it.protein}g</td>
+      <td class="carb-cell">${it.carbs}g</td>
+      <td class="fat-cell">${it.fat}g</td>
+    </tr>`;
   });
   html += '</tbody></table>';
+
+  // Recalculate button
+  html += '<div style="margin-top:12px;text-align:center;">';
+  html += '<button onclick="recalculateNutrition()" style="background:var(--primary);color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;font-size:0.9em;">🔄 Recalculate Nutrition</button>';
+  html += '</div>';
 
   // ── Messages ──
   if (data.messages && data.messages.length) {
@@ -657,6 +671,73 @@ function renderResults(data) {
   }
 
   body.innerHTML = html;
+}
+
+function recalculateNutrition() {
+  if (!lastAnalysisData || !lastAnalysisData.items) return;
+
+  const items = lastAnalysisData.items;
+  document.querySelectorAll('.grams-input').forEach(input => {
+    const idx = parseInt(input.dataset.idx);
+    if (idx < items.length) {
+      const newGrams = Math.max(1, parseInt(input.value) || items[idx].grams);
+      const origGrams = items[idx].original_grams || items[idx].grams;
+      const ratio = newGrams / origGrams;
+
+      // Use per_100g rates if available, otherwise scale proportionally
+      if (items[idx].per_100g) {
+        items[idx].calories = Math.round(items[idx].per_100g.calories * newGrams / 100);
+        items[idx].protein = Math.round(items[idx].per_100g.protein * newGrams / 100 * 10) / 10;
+        items[idx].carbs = Math.round(items[idx].per_100g.carbs * newGrams / 100 * 10) / 10;
+        items[idx].fat = Math.round(items[idx].per_100g.fat * newGrams / 100 * 10) / 10;
+      } else {
+        items[idx].calories = Math.round((items[idx].original_calories || items[idx].calories) * ratio);
+        items[idx].protein = Math.round((items[idx].original_protein || items[idx].protein) * ratio * 10) / 10;
+        items[idx].carbs = Math.round((items[idx].original_carbs || items[idx].carbs) * ratio * 10) / 10;
+        items[idx].fat = Math.round((items[idx].original_fat || items[idx].fat) * ratio * 10) / 10;
+      }
+      items[idx].grams = newGrams;
+    }
+  });
+
+  document.querySelectorAll('.qty-input').forEach(input => {
+    const idx = parseInt(input.dataset.idx);
+    if (idx < items.length) {
+      items[idx].quantity = Math.max(1, parseInt(input.value) || 1);
+    }
+  });
+
+  // Update totals
+  const totals = {calories: 0, protein: 0, carbs: 0, fat: 0};
+  items.forEach(it => {
+    totals.calories += it.calories;
+    totals.protein += it.protein;
+    totals.carbs += it.carbs;
+    totals.fat += it.fat;
+  });
+  lastAnalysisData.totals = totals;
+
+  // Update display cells
+  items.forEach((it, idx) => {
+    const row = document.querySelectorAll('.results-table tbody tr')[idx];
+    if (row) {
+      row.querySelector('.cal-cell').textContent = it.calories;
+      row.querySelector('.pro-cell').textContent = it.protein + 'g';
+      row.querySelector('.carb-cell').textContent = it.carbs + 'g';
+      row.querySelector('.fat-cell').textContent = it.fat + 'g';
+    }
+  });
+
+  // Update summary chips
+  const chips = document.querySelectorAll('.sum-chip');
+  if (chips.length >= 4) {
+    chips[0].textContent = '🔥 ' + totals.calories + ' cal';
+    chips[1].textContent = '💪 ' + Math.round(totals.protein) + 'g protein';
+    chips[2].textContent = '🌾 ' + Math.round(totals.carbs) + 'g carbs';
+    chips[3].textContent = '🧈 ' + Math.round(totals.fat) + 'g fat';
+  }
+
+  toast('Nutrition recalculated!', 'success');
 }
 
 // ── Save Meal ──

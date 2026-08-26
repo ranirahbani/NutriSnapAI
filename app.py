@@ -40,8 +40,10 @@ CONFIG_FILE = "nutri_config.json"
 CACHE_EXPIRY_DAYS = 7
 
 # YOLO model configuration (override via environment variables)
-YOLO_MODEL = os.environ.get("NUTRISNAP_YOLO_MODEL", "yolov8s.pt")
+YOLO_MODEL = os.environ.get("NUTRISNAP_YOLO_MODEL", "yolov8m.pt")
 YOLO_CONF_THRESHOLD = float(os.environ.get("NUTRISNAP_YOLO_CONF", "0.20"))
+ENSEMBLE_ENABLED = os.environ.get("NUTRISNAP_ENSEMBLE_ENABLED", "true").lower() == "true"
+COUNT_MODE = os.environ.get("NUTRISNAP_COUNT_MODE", "accurate")  # "accurate" (watershed) or "fast" (canny-only)
 
 # State: last analysis results for Save Meal button
 _last_analysis_results = None
@@ -728,6 +730,128 @@ def load_hf_classifier():
 
 
 # ============================================
+# MULTI-MODEL ENSEMBLE CLASSIFIER
+# ============================================
+
+class EnsembleClassifier:
+    """Multi-model food classification ensemble with majority voting + confidence fusion."""
+
+    MODEL_CONFIGS = [
+        {"name": "yvelos/beit-food-384", "weight": 1.0},
+        {"name": "nateraw/food", "weight": 1.0},
+        {"name": "Kaludi/food-category-classification-v2.0", "weight": 0.7},
+    ]
+
+    def __init__(self):
+        self.models = []  # list of (processor, model, weight, name)
+        self._loaded = False
+
+    def load_models(self):
+        """Lazy-load all ensemble models. Skips any that fail to load."""
+        if self._loaded:
+            return
+        from transformers import AutoImageProcessor, AutoModelForImageClassification
+        for cfg in self.MODEL_CONFIGS:
+            try:
+                processor = AutoImageProcessor.from_pretrained(cfg["name"])
+                model = AutoModelForImageClassification.from_pretrained(cfg["name"])
+                model.eval()
+                self.models.append((processor, model, cfg["weight"], cfg["name"]))
+                print(f"[NutriSnap Ensemble] Loaded {cfg['name']} (weight={cfg['weight']})")
+            except Exception as e:
+                print(f"[NutriSnap Ensemble] Failed to load {cfg['name']}: {e}")
+        self._loaded = True
+        if not self.models:
+            print("[NutriSnap Ensemble] WARNING: No ensemble models loaded, will fall back to single model")
+
+    def classify(self, image_pil, top_k=3):
+        """
+        Run all ensemble models on the image and return fused predictions.
+        Returns list of dicts: [{"label": str, "confidence": float, "vote_count": int}, ...]
+        sorted by fused score descending.
+        """
+        if not self._loaded:
+            self.load_models()
+        if not self.models:
+            return []
+
+        import torch
+        from PIL import Image
+
+        if not isinstance(image_pil, Image.Image):
+            image_pil = Image.fromarray(image_pil).convert("RGB")
+        else:
+            image_pil = image_pil.convert("RGB")
+
+        # Collect predictions from all models
+        all_predictions = []  # list of (label, confidence, weight)
+        for processor, model, weight, name in self.models:
+            try:
+                inputs = processor(images=image_pil, return_tensors="pt")
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
+                topk = torch.topk(probs, min(top_k, probs.shape[-1]), dim=-1)
+                for i in range(topk.indices.shape[1]):
+                    idx = topk.indices[0][i].item()
+                    score = topk.values[0][i].item()
+                    label = model.config.id2label[idx].lower().replace("-", "_").replace(" ", "_")
+                    all_predictions.append((label, score, weight))
+            except Exception as e:
+                print(f"[NutriSnap Ensemble] Inference error with {name}: {e}")
+                continue
+
+        return self._fuse_predictions(all_predictions)
+
+    def _fuse_predictions(self, all_predictions):
+        """
+        Apply majority voting + confidence-weighted fusion.
+        Returns sorted list of {"label", "confidence", "vote_count"}.
+        """
+        if not all_predictions:
+            return []
+
+        # Normalize labels through _resolve_food_name and group
+        label_scores = {}  # resolved_label -> {"weighted_sum": float, "vote_count": int, "raw_labels": set}
+
+        for raw_label, confidence, weight in all_predictions:
+            # Try to resolve to a DB key
+            resolved = _resolve_food_name(raw_label)
+            if not resolved:
+                resolved = raw_label  # keep raw if can't resolve
+
+            if resolved not in label_scores:
+                label_scores[resolved] = {"weighted_sum": 0.0, "vote_count": 0, "max_conf": 0.0, "raw_labels": set()}
+
+            label_scores[resolved]["weighted_sum"] += confidence * weight
+            label_scores[resolved]["vote_count"] += 1
+            label_scores[resolved]["max_conf"] = max(label_scores[resolved]["max_conf"], confidence)
+            label_scores[resolved]["raw_labels"].add(raw_label)
+
+        # Score: majority vote wins; ties broken by weighted_sum
+        results = []
+        for label, data in label_scores.items():
+            # Final score: vote_count acts as multiplier for majority gate
+            has_majority = data["vote_count"] >= 2
+            fused_confidence = data["weighted_sum"] / max(1, data["vote_count"])
+            # Boost majority labels
+            final_score = fused_confidence * (1.5 if has_majority else 1.0)
+            results.append({
+                "label": label,
+                "confidence": round(min(final_score, 1.0), 4),
+                "vote_count": data["vote_count"],
+            })
+
+        # Sort by: majority first, then by confidence
+        results.sort(key=lambda x: (x["vote_count"] >= 2, x["confidence"]), reverse=True)
+        return results[:3]
+
+
+# Global ensemble instance (loaded lazily on first use)
+ensemble_classifier = EnsembleClassifier()
+
+
+# ============================================
 # CSV LOGGING
 # ============================================
 
@@ -910,7 +1034,82 @@ def estimate_portion(bbox, img_shape, food_name=""):
     return label, mult, grams
 
 
-def enhanced_count_from_texture(food_name, bbox, image_bgr):
+def advanced_count_from_texture(food_name, bbox, image_bgr):
+    """
+    Use multiple CV techniques (contours, watershed, morphological) to estimate
+    item count for countable foods. Returns None if food is not countable.
+    """
+    key = food_name.lower().strip().replace(" ", "_")
+    if key not in COUNTABLE_FOODS:
+        return None
+
+    try:
+        x1, y1, x2, y2 = [int(c) for c in bbox]
+        crop = image_bgr[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        # Downscale large crops for performance (max 400x400)
+        h, w = crop.shape[:2]
+        if max(h, w) > 400:
+            scale = 400.0 / max(h, w)
+            crop = cv2.resize(crop, (int(w * scale), int(h * scale)))
+
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+        crop_area = crop.shape[0] * crop.shape[1]
+        min_contour_area = crop_area * 0.02
+        max_for_food = MAX_COUNTS.get(key, 8)
+
+        # ── Signal 1: Canny edge contour counting ──
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        canny_count = len([c for c in contours if cv2.contourArea(c) > min_contour_area])
+
+        # ── Signal 2: Watershed segmentation ──
+        try:
+            # Otsu threshold
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            # Morphological opening to remove noise
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+            # Distance transform
+            dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
+            _, sure_fg = cv2.threshold(dist_transform, 0.3 * dist_transform.max(), 255, 0)
+            sure_fg = np.uint8(sure_fg)
+            # Connected components for watershed markers
+            _, markers = cv2.connectedComponents(sure_fg)
+            watershed_count = markers.max() - 1  # subtract background
+            watershed_count = max(0, watershed_count)
+        except Exception:
+            watershed_count = canny_count  # fallback to canny if watershed fails
+
+        # ── Signal 3: Morphological separation + connected components ──
+        try:
+            # Adaptive threshold for varying lighting
+            adaptive = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                             cv2.THRESH_BINARY_INV, 11, 2)
+            # Close small gaps, then open to separate touching items
+            kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+            closed = cv2.morphologyEx(adaptive, cv2.MORPH_CLOSE, kernel_close)
+            opened = cv2.morphologyEx(closed, cv2.MORPH_OPEN, kernel_open)
+            # Count connected components
+            num_labels, _ = cv2.connectedComponents(opened)
+            morph_count = num_labels - 1  # subtract background
+        except Exception:
+            morph_count = canny_count
+
+        # ── Fusion: median of three signals, clamped ──
+        counts = sorted([canny_count, watershed_count, morph_count])
+        median_count = counts[1]  # median of 3 values
+
+        return min(max(1, median_count), max_for_food)
+    except Exception:
+        return None
+
+
+def _fast_count_from_texture(food_name, bbox, image_bgr):
     """Use edge density within a bounding box to estimate item count for countable foods."""
     key = food_name.lower().strip().replace(" ", "_")
     if key not in COUNTABLE_FOODS:
@@ -996,15 +1195,22 @@ def _heuristic_count(food_name, bbox, img_shape):
 
 
 def estimate_item_count(food_name, bbox, img_shape, image_bgr=None):
-    """Estimate item count with optional texture-based refinement."""
+    """Estimate item count with texture-based refinement (accurate or fast mode)."""
     count, desc, grams = _heuristic_count(food_name, bbox, img_shape)
 
     # Texture-based refinement for countable foods
     if image_bgr is not None:
-        texture_count = enhanced_count_from_texture(food_name, bbox, image_bgr)
+        if COUNT_MODE == "accurate":
+            texture_count = advanced_count_from_texture(food_name, bbox, image_bgr)
+        else:
+            texture_count = _fast_count_from_texture(food_name, bbox, image_bgr)
+
         if texture_count is not None and count > 0:
-            # Blend: 60% heuristic, 40% texture
-            blended = round(0.6 * count + 0.4 * texture_count)
+            # Blend: 50/50 for accurate mode, 60/40 heuristic/texture for fast mode
+            if COUNT_MODE == "accurate":
+                blended = round(0.5 * count + 0.5 * texture_count)
+            else:
+                blended = round(0.6 * count + 0.4 * texture_count)
             blended = max(1, blended)
             if blended != count:
                 # Recalculate grams proportionally
@@ -1286,25 +1492,50 @@ def analyze_image(image_path, status_callback=None):
 
         if x2 > x1 and y2 > y1:
             crop_pil = img_pil.crop((x1, y1, x2, y2))
-            hf_results = classify_with_hf(crop_pil, top_k=3)
-            # HF results are sorted by confidence (highest first).
-            # Take the highest-confidence label that maps to a valid DB entry,
-            # but only if confidence >= 0.15. Otherwise fall back to YOLO label.
+
+            # Use ensemble if enabled, fall back to single model
             resolved = None
-            for hf_r in hf_results:
-                if hf_r["confidence"] < 0.15:
-                    continue
-                mapped = _resolve_food_name(hf_r["label"])
-                if mapped and mapped in NUTRITION_DB:
-                    resolved = mapped
-                    break
-            # HF ALWAYS overrides the YOLO/COCO label when a valid result exists
+            candidates = []
+            if ENSEMBLE_ENABLED and ensemble_classifier and ensemble_classifier.models or (ENSEMBLE_ENABLED and not ensemble_classifier._loaded):
+                ensemble_results = ensemble_classifier.classify(crop_pil, top_k=3)
+                for er in ensemble_results:
+                    if er["confidence"] < 0.10:
+                        continue
+                    mapped = _resolve_food_name(er["label"])
+                    if mapped and mapped in NUTRITION_DB:
+                        candidates.append({"label": mapped, "confidence": er["confidence"], "votes": er.get("vote_count", 1)})
+                        if resolved is None:
+                            resolved = mapped
+
+                if not resolved:
+                    # Ensemble didn't produce valid result, fall back to single model
+                    hf_results = classify_with_hf(crop_pil, top_k=3)
+                    for hf_r in hf_results:
+                        if hf_r["confidence"] < 0.15:
+                            continue
+                        mapped = _resolve_food_name(hf_r["label"])
+                        if mapped and mapped in NUTRITION_DB:
+                            resolved = mapped
+                            break
+            else:
+                # Ensemble disabled — use single model
+                hf_results = classify_with_hf(crop_pil, top_k=3)
+                for hf_r in hf_results:
+                    if hf_r["confidence"] < 0.15:
+                        continue
+                    mapped = _resolve_food_name(hf_r["label"])
+                    if mapped and mapped in NUTRITION_DB:
+                        resolved = mapped
+                        break
+
             food_name = resolved if resolved else coco_name
         else:
             food_name = coco_name
+            candidates = []
 
         det["food"] = food_name
-        det["yolo_conf"] = det.get("confidence", 0)  # preserve YOLO confidence for skip logic
+        det["candidates"] = candidates[:3]
+        det["yolo_conf"] = det.get("confidence", 0)
         detections.append(det)
 
     # ── Stage 3: Sub-region scan for missed items ────────────────────────────
@@ -1846,6 +2077,8 @@ def build_ui():
     full_css = CSS
 
     with gr.Blocks(css=full_css, title="NutriSnap AI", theme=gr.themes.Soft(), head=JS_HEAD) as demo:
+        analysis_state = gr.State(value=None)
+
         # Header
         gr.HTML(HEADER_HTML)
 
@@ -1890,6 +2123,19 @@ def build_ui():
                         output_md = gr.Markdown(
                             value="Upload a photo and click **Analyze Food** to see results."
                         )
+
+                # Editable quantity table
+                with gr.Row(visible=False) as quantity_row:
+                    quantity_df = gr.Dataframe(
+                        headers=["Food", "Quantity", "Grams", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)"],
+                        datatype=["str", "number", "number", "number", "number", "number", "number"],
+                        interactive=True,
+                        col_count=(7, "fixed"),
+                        label="Edit quantities before saving",
+                    )
+                with gr.Row(visible=False) as recalc_row:
+                    recalc_btn = gr.Button("🔄 Recalculate Nutrition", variant="secondary")
+                    recalc_status = gr.Markdown("")
 
                 # Save Meal button (below results)
                 with gr.Row():
@@ -1986,15 +2232,33 @@ def build_ui():
         def on_analyze(file):
             global _last_analysis_results
             if file is None:
-                return None, "Please upload an image first.", "", []
+                return None, "Please upload an image first.", "", [], None, gr.update(visible=False), gr.update(visible=False), None
             status_msgs = []
             def collect_status(msg):
                 status_msgs.append(msg)
             annotated, summary, detections, thumbnails = analyze_image(file, status_callback=collect_status)
             status_text = "\n".join(status_msgs) if status_msgs else ""
-            # Store detections for Save Meal button
+            # Store detections for Save Meal button (backward compat for fallback server)
             _last_analysis_results = detections if detections else None
-            return annotated, summary, status_text, thumbnails
+
+            # Build dataframe rows from detections
+            df_rows = []
+            state_detections = []
+            if detections:
+                for det in detections:
+                    food_name = det.get("food", "").replace("_", " ").title()
+                    count = det.get("count", 1)
+                    grams = det.get("grams", 0)
+                    cal = det.get("calories", 0)
+                    pro = det.get("protein", 0)
+                    carb = det.get("carbs", 0)
+                    fat = det.get("fat", 0)
+                    df_rows.append([food_name, count, grams, cal, pro, carb, fat])
+                    state_detections.append(det.copy())
+
+            show_qty = gr.update(visible=bool(df_rows))
+            show_recalc = gr.update(visible=bool(df_rows))
+            return annotated, summary, status_text, thumbnails, df_rows if df_rows else None, show_qty, show_recalc, state_detections if state_detections else None
 
         def on_analyze_click():
             """Show spinner when analyze button is clicked."""
@@ -2066,11 +2330,11 @@ def build_ui():
         def on_refresh_log():
             return read_log()
 
-        def on_save_meal():
+        def on_save_meal(state):
             global _last_analysis_results
-            if _last_analysis_results is None:
-                return "⚠️ No meal to save. Analyze a photo first."
-            for det in _last_analysis_results:
+            if state is None:
+                return "⚠️ No meal to save. Analyze a photo first.", state
+            for det in state:
                 food = det.get("food", "").replace("_", " ").title()
                 log_meal(
                     food,
@@ -2080,8 +2344,60 @@ def build_ui():
                     det.get("fat", 0),
                     det.get("portion", ""),
                 )
+            # Also clear the global for backward compat
             _last_analysis_results = None
-            return "✅ Meal saved!"
+            return "✅ Meal saved!", None
+
+        def on_recalculate(df_data, state):
+            """Recalculate nutrition based on user-edited quantities."""
+            if df_data is None or state is None:
+                return df_data, state, "⚠️ No data to recalculate."
+            try:
+                updated_results = []
+                new_rows = []
+                for i, row in enumerate(df_data.values.tolist() if hasattr(df_data, 'values') else df_data):
+                    food = row[0] if isinstance(row[0], str) else str(row[0])
+                    quantity = max(1, int(float(row[1])))
+                    grams = max(1, int(float(row[2])))
+
+                    # Look up per-100g nutrition from NUTRITION_DB
+                    food_key = food.lower().replace(" ", "_")
+                    if food_key in NUTRITION_DB:
+                        nut = NUTRITION_DB[food_key]
+                        cal_per_100g = nut.get("calories", 200)
+                        pro_per_100g = nut.get("protein", 5)
+                        carb_per_100g = nut.get("carbs", 20)
+                        fat_per_100g = nut.get("fat", 8)
+                    else:
+                        # Use original values proportionally
+                        orig = state[i] if i < len(state) else {}
+                        orig_grams = orig.get("grams", 100) or 100
+                        cal_per_100g = (orig.get("calories", 200) / orig_grams) * 100
+                        pro_per_100g = (orig.get("protein", 5) / orig_grams) * 100
+                        carb_per_100g = (orig.get("carbs", 20) / orig_grams) * 100
+                        fat_per_100g = (orig.get("fat", 8) / orig_grams) * 100
+
+                    calories = round(cal_per_100g * grams / 100)
+                    protein = round(pro_per_100g * grams / 100, 1)
+                    carbs = round(carb_per_100g * grams / 100, 1)
+                    fat = round(fat_per_100g * grams / 100, 1)
+
+                    new_rows.append([food, quantity, grams, calories, protein, carbs, fat])
+
+                    # Update state for saving
+                    if i < len(state):
+                        state[i]["count"] = quantity
+                        state[i]["grams"] = grams
+                        state[i]["calories"] = calories
+                        state[i]["protein"] = protein
+                        state[i]["carbs"] = carbs
+                        state[i]["fat"] = fat
+
+                    updated_results.append(state[i] if i < len(state) else {})
+
+                return new_rows, state, "✅ Nutrition recalculated!"
+            except Exception as e:
+                return df_data, state, f"⚠️ Error: {e}"
 
         def on_delete_entry(row_idx):
             row_idx = int(row_idx)
@@ -2096,7 +2412,8 @@ def build_ui():
         # Wire up events
         analyze_btn.click(
             fn=on_analyze, inputs=[input_image],
-            outputs=[output_image, output_md, status_display, food_gallery],
+            outputs=[output_image, output_md, status_display, food_gallery,
+                     quantity_df, quantity_row, recalc_row, analysis_state],
             js="(file) => { var el = document.getElementById('analysis-spinner'); if (el) el.classList.add('active'); return file; }"
         )
         # Hide spinner when analysis completes (via output change)
@@ -2108,7 +2425,10 @@ def build_ui():
         manual_log_btn.click(fn=on_manual_log,
                              inputs=[manual_food, manual_cal, manual_protein, manual_carbs, manual_fat],
                              outputs=[manual_status])
-        save_meal_btn.click(fn=on_save_meal, outputs=[save_meal_status])
+        save_meal_btn.click(fn=on_save_meal, inputs=[analysis_state],
+                           outputs=[save_meal_status, analysis_state])
+        recalc_btn.click(fn=on_recalculate, inputs=[quantity_df, analysis_state],
+                         outputs=[quantity_df, analysis_state, recalc_status])
         refresh_btn.click(fn=on_refresh_dashboard,
                           outputs=[chart_daily, chart_macro, chart_weekly, chart_top, dash_stats])
         log_refresh.click(fn=on_refresh_log, outputs=[log_table])
@@ -2255,6 +2575,8 @@ def start_fallback_server(port=7860):
                 self._handle_test_api_key()
             elif path == "/api/cache/clear":
                 self._handle_clear_cache()
+            elif path == "/api/log/save":
+                self._handle_log_save()
             else:
                 self._error("Not found", 404)
 
@@ -2327,6 +2649,7 @@ def start_fallback_server(port=7860):
                     items = []
                     totals = {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
                     for det in detections:
+                        food_key = det.get("food", "").lower().replace(" ", "_")
                         item = {
                             "food": det.get("food", "").replace("_", " ").title(),
                             "portion": det.get("portion", ""),
@@ -2336,6 +2659,15 @@ def start_fallback_server(port=7860):
                             "carbs": det.get("carbs", 0),
                             "fat": det.get("fat", 0),
                             "confidence": det.get("confidence", 0),
+                            "quantity": det.get("count", 1),
+                            "original_grams": det.get("grams", 100),
+                            "per_100g": {
+                                "calories": round(NUTRITION_DB.get(food_key, {}).get("calories", 200)),
+                                "protein": round(NUTRITION_DB.get(food_key, {}).get("protein", 5), 1),
+                                "carbs": round(NUTRITION_DB.get(food_key, {}).get("carbs", 20), 1),
+                                "fat": round(NUTRITION_DB.get(food_key, {}).get("fat", 8), 1),
+                            },
+                            "candidates": det.get("candidates", []),
                         }
                         items.append(item)
                         totals["calories"] += item["calories"]
@@ -2422,6 +2754,30 @@ def start_fallback_server(port=7860):
                 fat = float(data.get("fat", 0))
                 log_meal(food, calories, protein, carbs, fat, "Manual")
                 self._json_response({"success": True, "message": f"Logged: {food} - {calories} cal"})
+            except Exception as e:
+                self._error(str(e), 500)
+
+        # ── API: Save Meal from Fallback UI ──
+        def _handle_log_save(self):
+            """Save meal from HTML fallback with user-edited quantities."""
+            try:
+                data = self._read_json_body()
+                items = data.get("items", [])
+                saved_count = 0
+                for it in items:
+                    food = it.get("food", "").strip()
+                    if not food:
+                        continue
+                    log_meal(
+                        food,
+                        float(it.get("calories", 0)),
+                        float(it.get("protein", 0)),
+                        float(it.get("carbs", 0)),
+                        float(it.get("fat", 0)),
+                        it.get("portion", ""),
+                    )
+                    saved_count += 1
+                self._json_response({"success": True, "message": f"Saved {saved_count} item(s)"})
             except Exception as e:
                 self._error(str(e), 500)
 

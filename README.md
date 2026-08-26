@@ -2,64 +2,44 @@
 
 **Snap. Identify. Track. Eat Better.**
 
-NutriSnap AI is a single-file food tracking application that uses computer vision to automatically detect, classify, and estimate nutrition from meal photos. It combines YOLOv8 object detection with a HuggingFace BEiT food classifier, sub-region scanning, and a multi-source nutrition lookup chain (USDA API → Open Food Facts → local database) to deliver accurate per-item calorie and macronutrient estimates.
+NutriSnap AI is a single-file food tracking application that uses computer vision to automatically detect, classify, and estimate nutrition from meal photos. It combines YOLOv8 object detection with a multi-model HuggingFace ensemble classifier, advanced OpenCV counting, and a multi-source nutrition lookup chain (USDA API → Open Food Facts → local database) to deliver accurate per-item calorie and macronutrient estimates.
 
 ---
 
-## Screenshots
+## Overview
 
-### Upload & Analyze
-![Upload Tab](docs/images/upload_tab.png)
+NutriSnap AI turns a meal photo into structured nutrition data in seconds:
 
-### Dashboard
-![Dashboard Tab](docs/images/dashboard_tab.png)
-
-### Architecture
-![Architecture Flow](docs/images/architecture_flow.png)
-
----
-
-## Quick Start
-
-### macOS / Linux
-
-```bash
-chmod +x start.sh
-./start.sh              # Gradio UI (default)
-./start.sh --fallback   # Force fallback HTML interface
-```
-
-### Windows
-
-```bat
-start.bat               # Gradio UI (default)
-start.bat --fallback    # Force fallback HTML interface
-```
-
-Both scripts automatically create a virtual environment, install all dependencies, and launch the app.
+1. **Upload** a photo of your meal
+2. **Detect** food items using YOLOv8 object detection
+3. **Classify** each item using a 3-model ensemble with majority voting
+4. **Count** items using advanced OpenCV techniques (watershed, morphological, contour analysis)
+5. **Look up** nutrition data from USDA, Open Food Facts, or the built-in database
+6. **Edit** quantities and portions before saving
+7. **Save** to CSV and track trends on the interactive dashboard
 
 ---
 
 ## Features
 
 ### Detection & Classification
-- **3-stage detection pipeline**: YOLO (YOLOv8s default) → HuggingFace BEiT refinement per crop → Sub-region scan for missed items
-- **Texture-based count refinement**: OpenCV contour analysis improves quantity estimation for dense foods
-- **Quantity estimation**: Data-driven `COUNT_RULES` tables with aspect-ratio correction for wide bounding boxes (side-by-side items)
+- **Multi-model ensemble food classification** — 3 parallel HuggingFace models with majority voting and confidence-weighted fusion
+- **Confidence-weighted fusion** with top candidate display showing vote counts per model
+- **Upgraded YOLOv8 detection** — configurable model selection (yolov8n/s/m) with automatic fallback to yolov8n on load failure
+- **Advanced item counting** — 3-signal OpenCV pipeline: watershed segmentation, morphological separation, Canny edge contours with median fusion
+- **Quantity estimation** — data-driven `COUNT_RULES` tables with aspect-ratio correction for wide bounding boxes (side-by-side items)
 - **100+ per-unit weights** in `UNIT_WEIGHTS` covering proteins, breads, pizza, Mexican, Asian, breakfast, snacks, fruits, desserts, sandwiches, and burgers
 - **20 food family hierarchies** in `FOOD_HIERARCHY` for deduplication (e.g., chicken → wings/drumstick/breast/thigh/nuggets/tenders)
-- **`HF_TO_DB_MAP`** (34-entry mapping): translates HuggingFace classifier labels to local nutrition database keys
+- **34-entry `HF_TO_DB_MAP`** translating HuggingFace classifier labels to local nutrition database keys
 - **Fuzzy matching** via `difflib.get_close_matches` + substring fallback for robust food name resolution
 
-### Nutrition Lookup
-- **USDA FoodData Central API** integration (requires free API key)
-- **Open Food Facts** public API as secondary source
-- **Local `NUTRITION_DB`** fallback (50+ foods with per-100g nutrition data)
-- **7-day JSON cache** (`nutrition_cache.json`) with automatic expiry
-- 5-step fallback chain: Cache → USDA → Open Food Facts → Local DB → None
+### User-Editable Quantities
+- **Gradio UI**: interactive dataframe appears after analysis — edit Quantity/Grams columns, click Recalculate, then Save
+- **HTML fallback UI**: inline number inputs in results table with client-side Recalculate button
+- Edited values override AI estimates in CSV log and dashboard calculations
 
 ### User Interface
-- **Full-screen Gradio UI** with 5 tabs (Upload, Dashboard, Food Log, Tips, Settings)
+- **5-tab Gradio interface**: Upload & Analyze, Dashboard, Food Log, Nutrition Tips, Settings
 - **Fallback HTML/JS interface** (`fallback_ui.html`) that auto-activates if Gradio is unavailable
 - **`--fallback` CLI flag** to force the HTML interface
 - **Dark mode** with live toggle (persisted to config)
@@ -67,6 +47,13 @@ Both scripts automatically create a virtual environment, install all dependencie
 - **Delete entry** per row and **Clear All** in Food Log
 - **Manual calorie entry** form when detection fails
 - **HTML meal report export** for PDF printing
+
+### Nutrition Lookup
+- **USDA FoodData Central API** integration (requires free API key)
+- **Open Food Facts** public API as secondary source
+- **Local `NUTRITION_DB`** fallback (50+ foods with per-100g nutrition data)
+- **7-day JSON cache** (`nutrition_cache.json`) with automatic expiry
+- 5-step fallback chain: Cache → USDA → Open Food Facts → Local DB → None
 
 ### Dashboard
 - **4 Plotly charts**: Daily Calorie Intake (bar), Macronutrient Distribution (pie), Weekly Calorie Trend (line), Top 5 Foods Eaten (horizontal bar)
@@ -82,14 +69,116 @@ Both scripts automatically create a virtual environment, install all dependencie
 
 ---
 
+## Screenshots
+
+### Upload & Analyze
+![Upload Tab](docs/images/upload_tab.png)
+
+### Dashboard
+![Dashboard Tab](docs/images/dashboard_tab.png)
+
+---
+
+## Architecture / Detection Pipeline
+
+```
+                         ┌──────────────────────┐
+                         │   Input Meal Photo    │
+                         └──────────┬───────────┘
+                                    │
+                     ┌──────────────▼──────────────┐
+                     │  Stage 1: YOLOv8 Detection   │
+                     │  (COCO food classes, WHERE)   │
+                     └──────────────┬──────────────┘
+                                    │
+               ┌────────────────────▼────────────────────┐
+               │  Stage 2: Multi-Model Ensemble           │
+               │  Classification (3 HF models → majority  │
+               │  voting → confidence fusion, WHAT)       │
+               └────────────────────┬────────────────────┘
+                                    │
+                    ┌───────────────▼───────────────┐
+                    │  Stage 3: Sub-Region Scan      │
+                    │  (missed items, skipped if ≥2  │
+                    │   high-confidence detections)  │
+                    └───────────────┬───────────────┘
+                                    │
+               ┌────────────────────▼────────────────────┐
+               │  Stage 4: Advanced Counting              │
+               │  (watershed + morphological + contour    │
+               │   → median fusion, clamped to max)       │
+               └────────────────────┬────────────────────┘
+                                    │
+               ┌────────────────────▼────────────────────┐
+               │  Stage 5: Nutrition Lookup               │
+               │  (USDA API → OpenFoodFacts → local DB)   │
+               └────────────────────┬────────────────────┘
+                                    │
+               ┌────────────────────▼────────────────────┐
+               │  Stage 6: User Quantity Editing          │
+               │  → Recalculate → Save to CSV             │
+               └─────────────────────────────────────────┘
+```
+
+![Architecture Flow](docs/images/architecture_flow.png)
+
+### Stage 1: YOLOv8 Detection (WHERE)
+YOLOv8 runs on the full image to locate food items. Only COCO food classes (banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake) are kept. Detections below `NUTRISNAP_YOLO_CONF` are discarded.
+
+### Stage 2: Multi-Model Ensemble Classification (WHAT)
+Each YOLO bounding box is cropped and passed to 3 HuggingFace models in parallel:
+- `yvelos/beit-food-384` (BEiT, weight 1.0) — primary high-accuracy classifier
+- `nateraw/food` (ViT, weight 1.0) — Food-101 specialized
+- `Kaludi/food-category-classification-v2.0` (ViT, weight 0.7) — broader food categories
+
+Predictions are fused via **majority voting** (≥2 models agree) with **confidence-weighted scoring** to break ties. Labels are resolved through `HF_TO_DB_MAP` and fuzzy matching against `NUTRITION_DB`. If the ensemble produces no valid result, the system falls back to the single primary model.
+
+### Stage 3: Sub-Region Scan
+Skipped when ≥2 YOLO detections have confidence >0.6 (indicating YOLO already found the main items). Otherwise, the image is divided into a grid (2×2, then 3×3) and uncovered regions are classified with the ensemble/single model to find missed food items (confidence ≥0.3). Duplicate food names are avoided.
+
+If no detections exist after all 3 stages, the full image is classified as a last resort.
+
+### Stage 4: Advanced Counting (HOW MANY)
+No reliable pre-trained food-counting model exists for CPU inference, so NutriSnap uses an improved OpenCV approach with 3 independent signals:
+
+1. **Canny edge contours** — Gaussian blur → Canny edge detection → external contour counting (filtered by minimum area)
+2. **Watershed segmentation** — Otsu threshold → morphological opening → distance transform → connected components as markers → component count
+3. **Morphological separation** — adaptive threshold → morphological close + open → connected component labeling
+
+The three signals are **fused via median** (middle value of 3), then clamped to food-specific maximums from `MAX_COUNTS`.
+
+- **Accurate mode** (default): all 3 signals, median fusion, 50/50 blend with heuristic rules
+- **Fast mode** (Canny-only): single signal, 60/40 blend favoring heuristics — use when analysis is slow
+
+### Stage 5: Nutrition Lookup
+For each detected food item, nutrition data is retrieved via a 5-step fallback:
+1. **Cache** — `nutrition_cache.json` entries less than 7 days old
+2. **USDA API** — FoodData Central (if API key configured)
+3. **Open Food Facts** — free public API, no key required
+4. **Local DB** — built-in `NUTRITION_DB` (50+ foods, per-100g values)
+5. **None** — item gets 0 calories/macros if all sources fail
+
+Successful lookups are cached for 7 days.
+
+### Stage 6: User Quantity Editing → Save
+After analysis, an editable table displays each detected item with Food name, Quantity, Grams, Calories, Protein, Carbs, and Fat. Users can adjust quantities and gram weights, click **Recalculate** to recompute nutrition from per-100g rates, then **Save Meal** to append to `meal_log.csv`. Edited values override AI estimates in the CSV log and dashboard.
+
+### Deduplication
+- Removes generic items (e.g., "chicken") when a specific variant (e.g., "chicken_wings") overlaps with IoU > 0.3
+- Merges same-food detections from different regions, combining counts and nutrition
+
+---
+
 ## Model Configuration
 
-The YOLO model and confidence threshold are controlled via environment variables:
+### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `NUTRISNAP_YOLO_MODEL` | `yolov8s.pt` | YOLOv8 model file to use |
+| `NUTRISNAP_YOLO_MODEL` | `yolov8m.pt` | YOLO detection model file |
 | `NUTRISNAP_YOLO_CONF` | `0.20` | Detection confidence threshold |
+| `NUTRISNAP_ENSEMBLE_ENABLED` | `true` | Enable/disable multi-model ensemble |
+| `NUTRISNAP_COUNT_MODE` | `accurate` | Counting mode: `accurate` (watershed + morphological + contour) or `fast` (Canny-only) |
 
 Set them before launching:
 
@@ -97,6 +186,8 @@ Set them before launching:
 # macOS / Linux
 export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
 export NUTRISNAP_YOLO_CONF="0.25"
+export NUTRISNAP_ENSEMBLE_ENABLED="true"
+export NUTRISNAP_COUNT_MODE="accurate"
 ./start.sh
 ```
 
@@ -104,81 +195,95 @@ export NUTRISNAP_YOLO_CONF="0.25"
 REM Windows
 set NUTRISNAP_YOLO_MODEL=yolov8m.pt
 set NUTRISNAP_YOLO_CONF=0.25
+set NUTRISNAP_ENSEMBLE_ENABLED=true
+set NUTRISNAP_COUNT_MODE=accurate
 start.bat
 ```
 
-### Model Comparison
+### YOLO Model Comparison
 
-| Model | Parameters | mAP (COCO) | CPU Speed | Use Case |
+| Model | Size | Speed | Accuracy | Use Case |
 |---|---|---|---|---|
-| `yolov8n.pt` | 3.2M | 37.3 | ~80ms | Fastest; low-power devices, quick testing |
-| **`yolov8s.pt`** | **11.2M** | **44.9** | **~130ms** | **Default; best balance of speed & accuracy** |
-| `yolov8m.pt` | 25.9M | 50.2 | ~250ms | Highest accuracy; slower, needs more RAM |
+| `yolov8n.pt` | ~6 MB | Fastest | Lower | Low-resource fallback, quick testing |
+| `yolov8s.pt` | ~22 MB | Fast | Good | Quick analysis, lower resource usage |
+| **`yolov8m.pt`** | **~50 MB** | **Medium** | **Best** | **Default (recommended)** |
 
 If the configured model fails to load (e.g., download error), the app automatically falls back to `yolov8n.pt`.
 
----
+### Ensemble Models
 
-## Detection Pipeline
+| Model | Type | Weight | Notes |
+|---|---|---|---|
+| `yvelos/beit-food-384` | BEiT | 1.0 | Primary classifier, high accuracy on food images |
+| `nateraw/food` | ViT | 1.0 | Trained on Food-101 dataset, specialized for food recognition |
+| `Kaludi/food-category-classification-v2.0` | ViT | 0.7 | Broader food categories, lower weight in fusion |
 
-```
-Image → YOLO Detection (WHERE) → HF Classification per crop (WHAT)
-      → Sub-region scan (missed items, skipped if ≥2 high-conf detections)
-      → Quantity estimation (COUNT_RULES + aspect-ratio + texture refinement)
-      → Nutrition lookup (cache → USDA → Open Food Facts → local DB)
-      → Results display
-```
-
-### Stage 1: YOLO Detection (WHERE)
-YOLOv8 runs on the full image to locate food items. Only COCO food classes (banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake) are kept. Detections below `NUTRISNAP_YOLO_CONF` are discarded.
-
-### Stage 2: HF Classification (WHAT)
-Each YOLO bounding box is cropped and passed to the HuggingFace `yvelos/beit-food-384` classifier. Top-3 predictions are evaluated; the highest-confidence label (≥0.15) that maps to a known food in `NUTRITION_DB` via `HF_TO_DB_MAP` or fuzzy matching wins. If no HF label maps, the YOLO/COCO label is kept.
-
-### Stage 3: Sub-Region Scan
-Skipped when ≥2 YOLO detections have confidence >0.6 (indicating YOLO already found the main items). Otherwise, the image is divided into a grid (2×2, then 3×3) and uncovered regions are classified with the HF model to find missed food items (confidence ≥0.3). Duplicate food names are avoided.
-
-If no detections exist after all 3 stages, the full image is classified as a last resort.
-
-### Stage 4: Quantity & Nutrition Estimation
-- `COUNT_RULES` maps food names to area-ratio thresholds that estimate count (e.g., "6 wings" vs "2 wings")
-- Aspect-ratio correction boosts the effective area ratio for wide bounding boxes (items side-by-side)
-- `PORTION_RULES` handles non-countable foods (fries, rice, salad, pasta, etc.)
-- `UNIT_WEIGHTS` provides per-item gram weights for 100+ food items
-- Nutrition is calculated per-gram from the lookup source, then multiplied by portion weight
-
-### Stage 5: Deduplication
-- Removes generic items (e.g., "chicken") when a specific variant (e.g., "chicken_wings") overlaps with IoU > 0.3
-- Merges same-food detections from different regions, combining counts and nutrition
-
-### Stage 6: Output
-- Annotated image with bounding boxes, labels, and calorie counts
-- Cropped food thumbnails with 35% padding (resized to 200×200)
-- Markdown summary table with per-item and total nutrition
+All 3 models run in parallel on each YOLO crop. Predictions are resolved through label normalization, fuzzy matching, and majority voting. Models that fail to load are silently skipped — the ensemble degrades gracefully to however many models are available.
 
 ---
 
-## Nutrition Lookup Flow
+## Counting Approach
 
-For each detected food item, nutrition data is retrieved via a 5-step fallback:
+No reliable pre-trained food-counting model is available for CPU inference. NutriSnap uses an improved OpenCV approach that combines 3 independent counting signals:
 
-1. **Cache** — Check `nutrition_cache.json` for data less than 7 days old
-2. **USDA API** — Query USDA FoodData Central (if API key is configured in `nutri_config.json`)
-3. **Open Food Facts** — Query the free, no-key Open Food Facts API
-4. **Local DB** — Fall back to the built-in `NUTRITION_DB` (50+ foods, per-100g values)
-5. **None** — Item gets 0 calories/macros if all sources fail
+| Signal | Technique | Strengths |
+|---|---|---|
+| **Canny contours** | Edge detection → external contours | Fast, good for well-separated items |
+| **Watershed segmentation** | Otsu → morphological opening → distance transform → connected components | Handles touching/overlapping items |
+| **Morphological separation** | Adaptive threshold → close + open → connected components | Robust to varying lighting |
 
-Successful lookups from USDA or OFF are cached for 7 days to avoid repeated API calls.
+**Fusion**: The median of all 3 signals is taken (robust to outliers), then clamped to the food-specific maximum from `MAX_COUNTS`.
+
+**Blending with heuristics**:
+- **Accurate mode** (default): 50% heuristic + 50% texture count — best overall accuracy
+- **Fast mode**: 60% heuristic + 40% texture (Canny only) — faster but less refined
+
+Set `NUTRISNAP_COUNT_MODE=fast` if analysis is too slow on your hardware.
 
 ---
 
-## Installation & Setup
+## User-Editable Quantities
+
+### Gradio UI
+After analysis, an interactive dataframe appears below the results with columns: **Food**, **Quantity**, **Grams**, **Calories**, **Protein (g)**, **Carbs (g)**, **Fat (g)**. All numeric columns are editable:
+1. Edit the Quantity or Grams values directly in the table
+2. Click **🔄 Recalculate Nutrition** to recompute all nutrition values from per-100g rates
+3. Click **💾 Save Meal** to log the edited values to CSV
+
+### HTML Fallback UI
+After analysis, each detected food item shows with inline number inputs for quantity and grams:
+1. Adjust the quantity/grams values in the input fields
+2. Click **🔄 Recalculate Nutrition** — client-side JavaScript recomputes calories and macros using per-100g rates
+3. Click **💾 Save Meal** to log the adjusted values
+
+Edited values override AI estimates in the CSV log and are reflected in dashboard charts and statistics.
+
+---
+
+## Installation & Quick Start
 
 ### Prerequisites
 - **Python 3.8+** (3.10+ recommended)
 - **pip** package manager
-- **4 GB+ RAM** (for model inference)
-- Internet connection (for model downloads and API calls)
+- **4 GB+ RAM** (~2 GB without ensemble, ~4–6 GB with all 3 ensemble models)
+- Internet connection (for model downloads and API calls on first run)
+
+### Quick Start (Recommended)
+
+**macOS / Linux:**
+```bash
+chmod +x start.sh
+./start.sh              # Gradio UI (default)
+./start.sh --fallback   # Force fallback HTML interface
+```
+
+**Windows:**
+```bat
+start.bat               # Gradio UI (default)
+start.bat --fallback    # Force fallback HTML interface
+```
+
+Both scripts automatically create a virtual environment, install all dependencies, and launch the app.
 
 ### Manual Setup
 
@@ -199,62 +304,51 @@ python app.py                  # Gradio UI
 python app.py --fallback       # Fallback HTML UI
 ```
 
-The first run downloads YOLOv8 and HuggingFace model weights automatically.
+### With Custom Configuration
 
----
-
-## Configuration
-
-### USDA API Key
-Get a free key at [data.nal.usda.gov/api-key-signup](https://fdc.nal.usda.gov/api-key-signup.html).
-
-Enter the key in the **Settings** tab of either the Gradio UI or the fallback HTML interface. Keys are stored in `nutri_config.json`.
-
-### Configuration File: `nutri_config.json`
-
-Auto-generated on first settings save. Structure:
-
-```json
-{
-  "usda_api_key": "YOUR_KEY_HERE",
-  "dark_mode": false
-}
+```bash
+# Use higher-accuracy YOLO model + ensemble
+export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
+export NUTRISNAP_ENSEMBLE_ENABLED="true"
+export NUTRISNAP_COUNT_MODE="accurate"
+python app.py
 ```
 
-### Environment Variables
+```bash
+# Low-resource mode (faster, less accurate)
+export NUTRISNAP_YOLO_MODEL="yolov8n.pt"
+export NUTRISNAP_ENSEMBLE_ENABLED="false"
+export NUTRISNAP_COUNT_MODE="fast"
+python app.py
+```
 
-| Variable | Default | Description |
-|---|---|---|
-| `NUTRISNAP_YOLO_MODEL` | `yolov8s.pt` | YOLO model file |
-| `NUTRISNAP_YOLO_CONF` | `0.20` | YOLO confidence threshold |
+The first run downloads YOLOv8 and HuggingFace model weights automatically (~200 MB total with all 3 ensemble models).
 
 ---
 
-## Usage
+## File Structure
 
-### Tab 1: Upload & Analyze
-Upload a meal photo (JPG, PNG, WEBP). Click **Analyze Food** to run the 3-stage detection pipeline. Review detected items, nutrition table, and annotated image. Click **Save Meal** to log results to CSV. Use the **Manual Entry** form if detection fails.
-
-### Tab 2: Dashboard
-View 4 Plotly charts and 3 summary cards showing your meal history trends. Click **Refresh Dashboard** to reload data.
-
-### Tab 3: Food Log
-Browse all logged meals in a sortable table. Delete individual entries by row index, or click **Clear All** to wipe the log.
-
-### Tab 4: Nutrition Tips
-Reference guide with Recommended Daily Intake (RDI) values, tracking best practices, dashboard interpretation tips, and healthy eating reminders.
-
-### Tab 5: Settings
-- **USDA API Key**: Enter, save, and test your USDA FoodData Central API key
-- **Cache Management**: View cached item count and clear the cache
-- **Export Data**: Download meal log as CSV or generate an HTML meal report for PDF printing
-- **Appearance**: Toggle dark mode (persisted across sessions)
-
-### Save / Delete Workflow
-1. Analyze a photo → review results
-2. Click **Save Meal** → each detected food item is appended to `meal_log.csv`
-3. View saved meals in the **Food Log** tab
-4. Delete individual rows by index, or **Clear All** to reset
+```
+NutriSnapAI/
+├── app.py                  # Main application — all logic in one file
+├── fallback_ui.html        # Standalone HTML/JS fallback interface
+├── requirements.txt        # Python dependencies
+├── README.md               # Documentation
+├── start.sh                # macOS/Linux launch script
+├── start.bat               # Windows launch script
+├── docs/
+│   └── images/
+│       ├── architecture_flow.png   # Architecture diagram
+│       ├── upload_tab.png          # Screenshot: Upload & Analyze tab
+│       └── dashboard_tab.png       # Screenshot: Dashboard tab
+│
+├── [auto-generated at runtime]
+│   ├── meal_log.csv            # Meal history (Date, Time, Food, Calories, Protein, Carbs, Fat, Portion, Confirmed)
+│   ├── nutrition_cache.json    # 7-day nutrition lookup cache
+│   ├── nutri_config.json       # App settings (USDA API key, dark mode)
+│   └── meal_report.html        # HTML meal report (generated via Export PDF)
+└── venv/                       # Virtual environment (created by start scripts)
+```
 
 ---
 
@@ -276,61 +370,96 @@ When running with `--fallback`, the app starts a lightweight HTTP server on port
 
 | Endpoint | Body | Description |
 |---|---|---|
-| `POST /api/analyze` | `multipart/form-data` (image field) | Run detection pipeline on uploaded image |
+| `POST /api/analyze` | `multipart/form-data` (image field) | Run detection pipeline on uploaded image. Returns items with nutrition, `per_100g` rates, `candidates`, `quantity` |
 | `POST /api/log/manual` | `{"food", "calories", "protein", "carbs", "fat"}` | Log a manual food entry |
 | `POST /api/settings` | `{"usda_api_key", "dark_mode"}` | Save settings |
 | `POST /api/settings/test` | `{"api_key"}` | Test USDA API connection |
 | `POST /api/cache/clear` | — | Clear nutrition cache |
 
+### Analyze Response Format
+
+```json
+{
+  "items": [
+    {
+      "food": "Chicken Wings",
+      "portion": "6 items (refined)",
+      "grams": 360,
+      "calories": 594,
+      "protein": 111.6,
+      "carbs": 0.0,
+      "fat": 13.0,
+      "confidence": 0.92,
+      "quantity": 6,
+      "per_100g": { "calories": 165, "protein": 31.0, "carbs": 0.0, "fat": 3.6 },
+      "candidates": [
+        { "label": "chicken_wings", "confidence": 0.92, "votes": 3 },
+        { "label": "chicken", "confidence": 0.78, "votes": 2 }
+      ]
+    }
+  ],
+  "totals": { "calories": 594, "protein": 111.6, "carbs": 0.0, "fat": 13.0 },
+  "messages": ["✅ Stage 1: Found 1 food item(s)", "🔍 Stage 2: Refining with AI classifier..."]
+}
+```
+
 ---
 
-## File Structure
+## Usage
 
-```
-NutriSnapAI/
-├── app.py                  # Main application (2453 lines) — all logic in one file
-├── fallback_ui.html        # Standalone HTML/JS fallback interface (885 lines)
-├── requirements.txt        # Python dependencies
-├── start.sh                # macOS/Linux startup script
-├── start.bat               # Windows startup script
-├── docs/
-│   └── images/
-│       ├── upload_tab.png          # Screenshot: Upload & Analyze tab
-│       ├── dashboard_tab.png       # Screenshot: Dashboard tab
-│       └── architecture_flow.png   # Architecture diagram
-│
-├── [auto-generated at runtime]
-│   ├── meal_log.csv            # Meal history (Date, Time, Food, Calories, Protein, Carbs, Fat, Portion, Confirmed)
-│   ├── nutrition_cache.json    # 7-day nutrition lookup cache
-│   ├── nutri_config.json       # App settings (USDA API key, dark mode)
-│   └── meal_report.html        # HTML meal report (generated via Export PDF)
-└── venv/                       # Virtual environment (created by start scripts)
-```
+### Tab 1: Upload & Analyze
+Upload a meal photo (JPG, PNG, WEBP). Click **Analyze Food** to run the multi-stage detection pipeline. Review detected items, nutrition table, annotated image, and candidate predictions. Edit quantities in the interactive table if needed, click **Recalculate Nutrition**, then **Save Meal** to log results to CSV. Use the **Manual Entry** form if detection fails.
+
+### Tab 2: Dashboard
+View 4 Plotly charts and 3 summary cards showing your meal history trends. Click **Refresh Dashboard** to reload data.
+
+### Tab 3: Food Log
+Browse all logged meals in a sortable table. Delete individual entries by row index, or click **Clear All** to wipe the log.
+
+### Tab 4: Nutrition Tips
+Reference guide with Recommended Daily Intake (RDI) values, tracking best practices, dashboard interpretation tips, and healthy eating reminders.
+
+### Tab 5: Settings
+- **USDA API Key**: Enter, save, and test your USDA FoodData Central API key
+- **Cache Management**: View cached item count and clear the cache
+- **Export Data**: Download meal log as CSV or generate an HTML meal report for PDF printing
+- **Appearance**: Toggle dark mode (persisted across sessions)
+
+### Save / Edit / Delete Workflow
+1. Analyze a photo → review results
+2. Edit quantities in the interactive table → Recalculate (optional)
+3. Click **Save Meal** → each detected food item is appended to `meal_log.csv`
+4. View saved meals in the **Food Log** tab
+5. Delete individual rows by index, or **Clear All** to reset
 
 ---
 
-## Architecture
+## Configuration Options
 
-`app.py` is organized into clearly delimited sections:
+### Environment Variables
 
-| Section | Line Range (approx.) | Description |
+| Variable | Default | Description |
 |---|---|---|
-| **Configuration & Constants** | 1–55 | File paths, theme colors, YOLO model config, global state |
-| **Nutrition Database** | 56–125 | `NUTRITION_DB` — 50+ foods with per-100g calories/protein/carbs/fat/typical_g |
-| **Unit Weights** | 127–268 | `UNIT_WEIGHTS` — 100+ entries mapping food names to grams-per-unit |
-| **Food Hierarchy** | 270–291 | `FOOD_HIERARCHY` — 20 food families for deduplication |
-| **Count Rules** | 293–420 | `COUNT_RULES` + `PORTION_RULES` — area-ratio-based quantity estimation |
-| **COCO & HF Mapping** | 422–486 | `COCO_FOOD_CLASSES`, `HF_TO_DB_MAP` (34 entries), `fuzzy_match_food()` |
-| **Nutrition API Functions** | 488–555 | `search_usda_food()`, `search_openfoodfacts()` |
-| **Cache System** | 557–620 | Load/save/query `nutrition_cache.json` with 7-day expiry |
-| **Settings Functions** | 622–663 | `load_config()`, `save_config()`, `test_usda_connection()`, `export_csv_file()` |
-| **AI Detection** | 666–710 | `load_yolo()` (with yolov8n fallback), `load_hf_classifier()` (yvelos/beit-food-384) |
-| **CSV Logging** | 712–775 | `ensure_csv()`, `log_meal()`, `read_log()`, `delete_log_entry()`, `clear_all_log()` |
-| **Analysis Pipeline** | 777–1402 | `calculate_nutrition()`, `estimate_portion()`, `estimate_item_count()`, `deduplicate_results()`, `detect_with_yolo()`, `classify_with_hf()`, `draw_annotations()`, `analyze_image()` |
-| **Dashboard** | 1404–1471 | `build_dashboard()` — 4 Plotly charts + 3 HTML summary cards |
-| **Gradio UI** | 1474–2064 | CSS, tips markdown, `generate_meal_report()`, `build_ui()` — all 5 tabs and event handlers |
-| **Fallback HTTP Server** | 2067–2427 | `start_fallback_server()` — lightweight REST API + HTML UI server on port 7860 |
-| **Main Entry Point** | 2430–2453 | Model loading, `--fallback` flag check, Gradio launch with auto-fallback |
+| `NUTRISNAP_YOLO_MODEL` | `yolov8m.pt` | YOLO model file (`yolov8n.pt`, `yolov8s.pt`, `yolov8m.pt`) |
+| `NUTRISNAP_YOLO_CONF` | `0.20` | YOLO detection confidence threshold (0.0–1.0) |
+| `NUTRISNAP_ENSEMBLE_ENABLED` | `true` | Enable multi-model ensemble (`true`/`false`) |
+| `NUTRISNAP_COUNT_MODE` | `accurate` | Counting mode: `accurate` (3-signal median) or `fast` (Canny-only) |
+
+### Configuration File: `nutri_config.json`
+
+Auto-generated on first settings save. Structure:
+
+```json
+{
+  "usda_api_key": "YOUR_KEY_HERE",
+  "dark_mode": false
+}
+```
+
+### USDA API Key
+Get a free key at [fdc.nal.usda.gov/api-key-signup](https://fdc.nal.usda.gov/api-key-signup.html).
+
+Enter the key in the **Settings** tab of either the Gradio UI or the fallback HTML interface. Keys are stored in `nutri_config.json`.
 
 ---
 
@@ -341,15 +470,15 @@ All dependencies are listed in `requirements.txt`:
 | Package | Purpose |
 |---|---|
 | `gradio` | Web UI framework (main interface) |
-| `torch` | PyTorch — deep learning inference (YOLO, HuggingFace) |
+| `torch` | PyTorch — deep learning inference (YOLO, HuggingFace models) |
 | `torchvision` | Image transforms for model preprocessing |
-| `transformers` | HuggingFace `AutoImageProcessor` + `AutoModelForImageClassification` for BEiT food classifier |
+| `transformers` | HuggingFace `AutoImageProcessor` + `AutoModelForImageClassification` for ensemble classifiers |
 | `pillow` | Image loading and manipulation (PIL) |
 | `pandas` | CSV read/write, dataframe operations for meal log and dashboard |
 | `matplotlib` | Chart rendering backend (Agg backend for headless use) |
 | `plotly` | Interactive dashboard charts (bar, pie, line, horizontal bar) |
 | `ultralytics` | YOLOv8 object detection model |
-| `opencv-python-headless` | Image processing, bounding box drawing, contour analysis |
+| `opencv-python-headless` | Image processing: watershed, morphological ops, contour analysis, bounding box drawing |
 | `requests>=2.28.0` | HTTP client for USDA API and Open Food Facts API calls |
 | `numpy` | Numerical array operations for image processing |
 
@@ -361,7 +490,7 @@ All dependencies are listed in `requirements.txt`:
 
 1. **"Python 3 is not installed"** — Install via Homebrew: `brew install python3`
 2. **`chmod: operation not permitted`** — Run `chmod +x start.sh` first
-3. **`pip install torch` fails on M1/M2 Macs** — Try: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`
+3. **`pip install torch` fails on M1/M2/M3 Macs** — Try: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`
 4. **Port 7860 already in use** — Kill the existing process: `lsof -ti:7860 | xargs kill`
 
 ### Windows
@@ -371,18 +500,56 @@ All dependencies are listed in `requirements.txt`:
 7. **`venv\Scripts\activate.bat` not found** — Delete the `venv` folder and re-run `start.bat`
 8. **`torch` CUDA errors** — Force CPU-only: `pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu`
 
+### Model Downloads
+
+9. **YOLO model download hangs** — Check internet connection and firewall; models are downloaded on first run (~22 MB for yolov8s, ~50 MB for yolov8m)
+10. **HuggingFace model download fails** — Ensemble models total ~150 MB; ensure sufficient disk space and no firewall blocking `huggingface.co`
+11. **Slow first analysis** — First run downloads all model weights; subsequent runs load from local cache
+
+### Performance & Resources
+
+12. **High RAM usage** — ~4–6 GB with full ensemble (3 models); switch to `NUTRISNAP_ENSEMBLE_ENABLED=false` for ~2 GB usage
+13. **Analysis is slow** — Set `NUTRISNAP_COUNT_MODE=fast` to skip watershed/morphological counting; or use `yolov8n.pt` for faster detection
+14. **GPU availability** — runs on CPU by default; CUDA is auto-detected by PyTorch if available for faster inference
+
+### Detection Issues
+
+15. **"No food items detected"** — Use a clearer photo with good lighting; all food items should be fully visible and not heavily occluded
+16. **Nutrition values seem wrong** — Clear the cache in Settings to force fresh API lookups; verify portion sizes visually; edit quantities manually
+17. **Wrong food identification** — Check candidate predictions in the results; ensemble majority voting usually corrects single-model errors
+
 ### General
 
-9. **YOLO model download hangs** — Check internet connection; models are downloaded on first run (~25 MB for yolov8s)
-10. **"No food items detected"** — Use a clearer photo with good lighting; all food items should be fully visible
-11. **Gradio `share=True` link expires** — The public link expires after 72 hours; restart the app for a new link
-12. **USDA API returns 401** — Your API key may be invalid; get a new one at [data.nal.usda.gov](https://fdc.nal.usda.gov/api-key-signup.html)
-13. **Nutrition values seem wrong** — Clear the cache in Settings to force fresh API lookups; verify portion sizes visually
-14. **Dashboard shows no data** — Save at least one meal via the "Save Meal" button first; data persists in `meal_log.csv`
-15. **Fallback UI "Failed to save meal"** — The fallback server's `/api/log/save` endpoint may not be implemented; use the Gradio UI for save/delete/clear operations
-16. **Slow first analysis** — First run downloads YOLO and HuggingFace model weights; subsequent runs load from cache
-17. **High RAM usage** — `yolov8m.pt` requires ~4 GB RAM; switch to `yolov8s.pt` (default) or `yolov8n.pt` for lower memory usage
-18. **CSV export is empty** — Log at least one meal before exporting
+18. **Gradio `share=True` link expires** — The public link expires after 72 hours; restart the app for a new link
+19. **Fallback UI activation** — Use `--fallback` flag or the app auto-fallbacks if Gradio is unavailable (import error, port conflict)
+20. **USDA API returns 401** — Your API key may be invalid; get a new one at [data.nal.usda.gov](https://fdc.nal.usda.gov/api-key-signup.html)
+21. **Dashboard shows no data** — Save at least one meal via the "Save Meal" button first; data persists in `meal_log.csv`
+22. **CSV export is empty** — Log at least one meal before exporting
+
+---
+
+## Architecture (Code Organization)
+
+`app.py` is organized into clearly delimited sections:
+
+| Section | Description |
+|---|---|
+| **Configuration & Constants** | File paths, theme colors, YOLO/ensemble/count config, global state |
+| **Nutrition Database** | `NUTRITION_DB` — 50+ foods with per-100g calories/protein/carbs/fat/typical_g |
+| **Unit Weights** | `UNIT_WEIGHTS` — 100+ entries mapping food names to grams-per-unit |
+| **Food Hierarchy** | `FOOD_HIERARCHY` — 20 food families for deduplication |
+| **Count Rules** | `COUNT_RULES` + `PORTION_RULES` — area-ratio-based quantity estimation |
+| **COCO & HF Mapping** | `COCO_FOOD_CLASSES`, `HF_TO_DB_MAP` (34 entries), `fuzzy_match_food()` |
+| **Nutrition API Functions** | `search_usda_food()`, `search_openfoodfacts()` |
+| **Cache System** | Load/save/query `nutrition_cache.json` with 7-day expiry |
+| **Settings Functions** | `load_config()`, `save_config()`, `test_usda_connection()`, `export_csv_file()` |
+| **AI Detection** | `load_yolo()` (with yolov8n fallback), `load_hf_classifier()`, `EnsembleClassifier` class |
+| **CSV Logging** | `ensure_csv()`, `log_meal()`, `read_log()`, `delete_log_entry()`, `clear_all_log()` |
+| **Analysis Pipeline** | `analyze_image()` — 6-stage pipeline with ensemble, counting, nutrition, deduplication |
+| **Dashboard** | `build_dashboard()` — 4 Plotly charts + 3 HTML summary cards |
+| **Gradio UI** | CSS, tips, `generate_meal_report()`, `build_ui()` — all 5 tabs and event handlers |
+| **Fallback HTTP Server** | `start_fallback_server()` — lightweight REST API + HTML UI server on port 7860 |
+| **Main Entry Point** | Model loading, `--fallback` flag check, Gradio launch with auto-fallback |
 
 ---
 

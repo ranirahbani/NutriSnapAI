@@ -6,7 +6,8 @@ pillow
 pandas
 matplotlib
 plotly
-ultralytics
+ultralytics>=8.1
 opencv-python-headless
 requests>=2.28.0
 numpy
+scipy>=1.10
