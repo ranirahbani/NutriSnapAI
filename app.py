@@ -39,6 +39,9 @@ CACHE_FILE = "nutrition_cache.json"
 CONFIG_FILE = "nutri_config.json"
 CACHE_EXPIRY_DAYS = 7
 
+# State: last analysis results for Save Meal button
+_last_analysis_results = None
+
 # Color theme
 THEME_PRIMARY = "#2C7A4A"
 THEME_SECONDARY = "#1A5A3A"
@@ -431,9 +434,37 @@ def read_log():
         for col in CSV_COLUMNS:
             if col not in df.columns:
                 df[col] = ""
-        return df[CSV_COLUMNS]
+        df = df[CSV_COLUMNS]
+        # Format Time column to HH:MM (strip seconds)
+        if "Time" in df.columns:
+            df["Time"] = df["Time"].astype(str).str[:5]
+        return df
     except pd.errors.EmptyDataError:
         return pd.DataFrame(columns=CSV_COLUMNS)
+
+
+def delete_log_entry(row_index):
+    """Delete a single row from the CSV by 0-based index."""
+    ensure_csv()
+    try:
+        df = pd.read_csv(CSV_FILE)
+        if df.empty or row_index < 0 or row_index >= len(df):
+            return False
+        df = df.drop(index=row_index).reset_index(drop=True)
+        df.to_csv(CSV_FILE, index=False)
+        return True
+    except Exception:
+        return False
+
+
+def clear_all_log():
+    """Wipe all entries from the CSV."""
+    ensure_csv()
+    try:
+        pd.DataFrame(columns=CSV_COLUMNS).to_csv(CSV_FILE, index=False)
+        return True
+    except Exception:
+        return False
 
 
 # ============================================
@@ -813,15 +844,17 @@ def analyze_image(image_path, status_callback=None):
         nutr = calculate_nutrition(food, grams, status_callback=status_messages.append)
         if nutr:
             det.update(nutr)
-            det["portion"] = portion_label
-            det["grams"] = grams
-            results.append(det)
-            total_cal += nutr["calories"]
-            total_pro += nutr["protein"]
-            total_carb += nutr["carbs"]
-            total_fat += nutr["fat"]
-            log_meal(food.replace("_", " ").title(), nutr["calories"],
-                     nutr["protein"], nutr["carbs"], nutr["fat"], portion_label)
+        else:
+            # Ensure item still gets annotated even if nutrition lookup fails
+            det.update({"calories": 0, "protein": 0, "carbs": 0, "fat": 0})
+        det["portion"] = portion_label
+        det["grams"] = grams
+        results.append(det)
+        total_cal += det.get("calories", 0)
+        total_pro += det.get("protein", 0)
+        total_carb += det.get("carbs", 0)
+        total_fat += det.get("fat", 0)
+        # Auto-save removed — use "Save Meal" button to log results
 
     if status_callback:
         for msg in status_messages:
@@ -839,7 +872,14 @@ def analyze_image(image_path, status_callback=None):
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(img_np.shape[1], x2), min(img_np.shape[0], y2)
         if x2 > x1 and y2 > y1:
-            crop = img_np[y1:y2, x1:x2].copy()
+            # Add 20% padding around bounding box for natural-looking thumbnails
+            pad_x = int((x2 - x1) * 0.2)
+            pad_y = int((y2 - y1) * 0.2)
+            crop_y1 = max(0, y1 - pad_y)
+            crop_y2 = min(img_np.shape[0], y2 + pad_y)
+            crop_x1 = max(0, x1 - pad_x)
+            crop_x2 = min(img_np.shape[1], x2 + pad_x)
+            crop = img_np[crop_y1:crop_y2, crop_x1:crop_x2].copy()
             crop_resized = cv2.resize(crop, (200, 200), interpolation=cv2.INTER_CUBIC)
             label = det["food"].replace("_", " ").title()
             cropped_thumbnails.append((crop_resized, label))
@@ -888,7 +928,8 @@ def build_dashboard():
     fig_daily = px.bar(daily, x="Date", y="Calories",
                        title="Daily Calorie Intake",
                        color_discrete_sequence=[THEME_PRIMARY])
-    fig_daily.update_layout(template="plotly_white", height=350)
+    fig_daily.update_layout(template="plotly_white", height=380, margin=dict(b=60, t=50))
+    fig_daily.update_xaxes(tickformat="%Y-%m-%d", tickangle=-30)
 
     # 2. Macro distribution (pie chart)
     macro_totals = {
@@ -899,7 +940,7 @@ def build_dashboard():
     fig_macro = px.pie(names=list(macro_totals.keys()), values=list(macro_totals.values()),
                        title="Macronutrient Distribution",
                        color_discrete_sequence=[THEME_PRIMARY, THEME_ACCENT, "#81C784"])
-    fig_macro.update_layout(template="plotly_white", height=350)
+    fig_macro.update_layout(template="plotly_white", height=380, margin=dict(b=40, t=50))
 
     # 3. Weekly calorie trend
     df["DateObj"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -908,7 +949,8 @@ def build_dashboard():
     fig_weekly = px.line(weekly, x="Week", y="Calories",
                          title="Weekly Calorie Trend",
                          color_discrete_sequence=[THEME_PRIMARY])
-    fig_weekly.update_layout(template="plotly_white", height=350)
+    fig_weekly.update_layout(template="plotly_white", height=380, margin=dict(b=60, t=50))
+    fig_weekly.update_xaxes(tickformat="%Y-%m-%d", tickangle=-30)
 
     # 4. Top foods eaten
     top = df["Food"].value_counts().head(5).reset_index()
@@ -916,19 +958,19 @@ def build_dashboard():
     fig_top = px.bar(top, y="Food", x="Count", orientation="h",
                      title="Top 5 Foods Eaten",
                      color_discrete_sequence=[THEME_ACCENT])
-    fig_top.update_layout(template="plotly_white", height=350, yaxis={"categoryorder": "total ascending"})
+    fig_top.update_layout(template="plotly_white", height=380, yaxis={"categoryorder": "total ascending"}, margin=dict(l=120))
 
     # Summary cards
-    total_cal = round(df["Calories"].sum(), 1)
+    total_cal = int(round(df["Calories"].sum()))
     total_meals = len(df)
-    avg_cal = round(df["Calories"].mean(), 1)
+    avg_cal = int(round(df["Calories"].mean()))
     stats = (f"<div style='display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;'>"
              f"<div style='background:{THEME_PRIMARY};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
              f"<div style='font-size:1.8em;font-weight:700;'>{total_meals}</div><div style='opacity:0.85;font-size:0.9em;'>📊 Total Meals</div></div>"
              f"<div style='background:{THEME_ACCENT};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
-             f"<div style='font-size:1.8em;font-weight:700;'>{total_cal:,.0f}</div><div style='opacity:0.85;font-size:0.9em;'>🔥 Total Calories</div></div>"
+             f"<div style='font-size:1.8em;font-weight:700;'>{total_cal:,}</div><div style='opacity:0.85;font-size:0.9em;'>🔥 Total Calories</div></div>"
              f"<div style='background:{THEME_SECONDARY};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
-             f"<div style='font-size:1.8em;font-weight:700;'>{avg_cal:.0f} cal</div><div style='opacity:0.85;font-size:0.9em;'>📈 Avg per Meal</div></div>"
+             f"<div style='font-size:1.8em;font-weight:700;'>{avg_cal} cal</div><div style='opacity:0.85;font-size:0.9em;'>📈 Avg per Meal</div></div>"
              f"</div>")
 
     return fig_daily, fig_macro, fig_weekly, fig_top, stats
@@ -1279,6 +1321,11 @@ def build_ui():
                             value="Upload a photo and click **Analyze Food** to see results."
                         )
 
+                # Save Meal button (below results)
+                with gr.Row():
+                    save_meal_btn = gr.Button("💾 Save Meal", variant="secondary")
+                    save_meal_status = gr.Markdown("")
+
                 # Manual calorie entry section
                 with gr.Row():
                     gr.Markdown("---")
@@ -1309,6 +1356,14 @@ def build_ui():
             with gr.TabItem("📋 Food Log"):
                 log_table = gr.Dataframe(headers=CSV_COLUMNS, label="Meal History", interactive=False)
                 log_refresh = gr.Button("🔄 Refresh Log")
+                gr.Markdown("---")
+                gr.Markdown("#### 🗑️ Manage Entries")
+                with gr.Row():
+                    delete_row_input = gr.Number(label="Row index to delete (0-based)", value=0, precision=0)
+                    delete_entry_btn = gr.Button("🗑️ Delete Entry", variant="secondary")
+                with gr.Row():
+                    clear_all_btn = gr.Button("🗑️ Clear All Log", variant="stop")
+                    log_delete_status = gr.Markdown("")
 
             # ---- Tab 4: Tips ----
             with gr.TabItem("💡 Nutrition Tips"):
@@ -1359,6 +1414,7 @@ def build_ui():
 
         # ---- Event Handlers ----
         def on_analyze(file):
+            global _last_analysis_results
             if file is None:
                 return None, "Please upload an image first.", "", []
             status_msgs = []
@@ -1366,6 +1422,8 @@ def build_ui():
                 status_msgs.append(msg)
             annotated, summary, detections, thumbnails = analyze_image(file, status_callback=collect_status)
             status_text = "\n".join(status_msgs) if status_msgs else ""
+            # Store detections for Save Meal button
+            _last_analysis_results = detections if detections else None
             return annotated, summary, status_text, thumbnails
 
         def on_analyze_click():
@@ -1438,6 +1496,33 @@ def build_ui():
         def on_refresh_log():
             return read_log()
 
+        def on_save_meal():
+            global _last_analysis_results
+            if _last_analysis_results is None:
+                return "⚠️ No meal to save. Analyze a photo first."
+            for det in _last_analysis_results:
+                food = det.get("food", "").replace("_", " ").title()
+                log_meal(
+                    food,
+                    det.get("calories", 0),
+                    det.get("protein", 0),
+                    det.get("carbs", 0),
+                    det.get("fat", 0),
+                    det.get("portion", ""),
+                )
+            _last_analysis_results = None
+            return "✅ Meal saved!"
+
+        def on_delete_entry(row_idx):
+            row_idx = int(row_idx)
+            if delete_log_entry(row_idx):
+                return "✅ Entry deleted", read_log()
+            return "⚠️ Invalid row index or empty log.", read_log()
+
+        def on_clear_all():
+            clear_all_log()
+            return "✅ All log entries cleared.", read_log()
+
         # Wire up events
         analyze_btn.click(
             fn=on_analyze, inputs=[input_image],
@@ -1453,9 +1538,15 @@ def build_ui():
         manual_log_btn.click(fn=on_manual_log,
                              inputs=[manual_food, manual_cal, manual_protein, manual_carbs, manual_fat],
                              outputs=[manual_status])
+        save_meal_btn.click(fn=on_save_meal, outputs=[save_meal_status])
         refresh_btn.click(fn=on_refresh_dashboard,
                           outputs=[chart_daily, chart_macro, chart_weekly, chart_top, dash_stats])
         log_refresh.click(fn=on_refresh_log, outputs=[log_table])
+        delete_entry_btn.click(fn=on_delete_entry,
+                               inputs=[delete_row_input],
+                               outputs=[log_delete_status, log_table])
+        clear_all_btn.click(fn=on_clear_all,
+                            outputs=[log_delete_status, log_table])
         test_conn_btn.click(fn=on_test_connection, inputs=[usda_key_input], outputs=[conn_status])
         save_key_btn.click(fn=on_save_key, inputs=[usda_key_input], outputs=[conn_status])
         clear_cache_btn.click(fn=on_clear_cache, outputs=[cache_status, cache_info])
