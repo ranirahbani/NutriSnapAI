@@ -1201,12 +1201,12 @@ def build_ui():
         analyze_btn.click(
             fn=on_analyze, inputs=[input_image],
             outputs=[output_image, output_md, status_display, food_gallery],
-            js="(function() { var el = document.getElementById('analysis-spinner'); if (el) el.classList.add('active'); })()"
+            js="(file) => { var el = document.getElementById('analysis-spinner'); if (el) el.classList.add('active'); return file; }"
         )
         # Hide spinner when analysis completes (via output change)
         output_image.change(
-            fn=None, inputs=None, outputs=None,
-            js="(function() { var el = document.getElementById('analysis-spinner'); if (el) el.classList.remove('active'); })()"
+            fn=None, inputs=[output_image], outputs=None,
+            js="(img) => { var el = document.getElementById('analysis-spinner'); if (el) el.classList.remove('active'); return img; }"
         )
 
         manual_log_btn.click(fn=on_manual_log,
@@ -1410,7 +1410,7 @@ def start_fallback_server(port=7860):
                     def collect_status(msg):
                         status_msgs.append(msg)
 
-                    annotated, summary, detections = analyze_image(
+                    annotated, summary, detections, thumbnails = analyze_image(
                         tmp.name, status_callback=collect_status
                     )
 
