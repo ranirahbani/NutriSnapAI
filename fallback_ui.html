@@ -646,7 +646,7 @@ function renderResults(data) {
   html += '<table class="results-table"><thead><tr><th>Food</th><th>Portion</th><th>Qty</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>';
   data.items.forEach((it, idx) => {
     html += `<tr>
-      <td>${it.food}</td>
+      <td><input type="text" class="food-input" value="${it.food}" data-idx="${idx}" style="width:120px;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:0.85em;"></td>
       <td>${it.portion}</td>
       <td><input type="number" class="qty-input" value="${it.quantity || 1}" min="1" max="99" data-idx="${idx}" style="width:50px;padding:4px;border:1px solid #ccc;border-radius:4px;text-align:center;"></td>
       <td><input type="number" class="grams-input" value="${it.grams}" min="1" max="9999" data-idx="${idx}" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:4px;text-align:center;"></td>
@@ -677,6 +677,28 @@ function recalculateNutrition() {
   if (!lastAnalysisData || !lastAnalysisData.items) return;
 
   const items = lastAnalysisData.items;
+
+  // Read edited food names
+  document.querySelectorAll('.food-input').forEach(input => {
+    const idx = parseInt(input.dataset.idx);
+    if (idx < items.length) {
+      const newName = input.value.trim();
+      if (newName && newName !== items[idx].food) {
+        items[idx].food = newName;
+        items[idx].food_corrected = true;
+      }
+    }
+  });
+
+  // Read edited quantities
+  document.querySelectorAll('.qty-input').forEach(input => {
+    const idx = parseInt(input.dataset.idx);
+    if (idx < items.length) {
+      items[idx].quantity = Math.max(1, parseInt(input.value) || 1);
+    }
+  });
+
+  // Read edited grams and recalculate
   document.querySelectorAll('.grams-input').forEach(input => {
     const idx = parseInt(input.dataset.idx);
     if (idx < items.length) {
@@ -684,7 +706,6 @@ function recalculateNutrition() {
       const origGrams = items[idx].original_grams || items[idx].grams;
       const ratio = newGrams / origGrams;
 
-      // Use per_100g rates if available, otherwise scale proportionally
       if (items[idx].per_100g) {
         items[idx].calories = Math.round(items[idx].per_100g.calories * newGrams / 100);
         items[idx].protein = Math.round(items[idx].per_100g.protein * newGrams / 100 * 10) / 10;
@@ -697,13 +718,6 @@ function recalculateNutrition() {
         items[idx].fat = Math.round((items[idx].original_fat || items[idx].fat) * ratio * 10) / 10;
       }
       items[idx].grams = newGrams;
-    }
-  });
-
-  document.querySelectorAll('.qty-input').forEach(input => {
-    const idx = parseInt(input.dataset.idx);
-    if (idx < items.length) {
-      items[idx].quantity = Math.max(1, parseInt(input.value) || 1);
     }
   });
 

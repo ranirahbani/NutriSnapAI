@@ -2,7 +2,7 @@
 
 **Snap. Identify. Track. Eat Better.**
 
-NutriSnap AI is a single-file food tracking application that uses computer vision to automatically detect, classify, and estimate nutrition from meal photos. It combines YOLOv8 object detection with a multi-model HuggingFace ensemble classifier, advanced OpenCV counting, and a multi-source nutrition lookup chain (USDA API → Open Food Facts → local database) to deliver accurate per-item calorie and macronutrient estimates.
+NutriSnap AI is a single-file food tracking application that uses computer vision to automatically detect, classify, and estimate nutrition from meal photos. It combines YOLOv8 object detection with a multi-model HuggingFace ensemble classifier, YOLO11n-based item counting (with OpenCV fallback), and a multi-source nutrition lookup chain (USDA API → Open Food Facts → local database) to deliver accurate per-item calorie and macronutrient estimates.
 
 ---
 
@@ -13,9 +13,9 @@ NutriSnap AI turns a meal photo into structured nutrition data in seconds:
 1. **Upload** a photo of your meal
 2. **Detect** food items using YOLOv8 object detection
 3. **Classify** each item using a 3-model ensemble with majority voting
-4. **Count** items using advanced OpenCV techniques (watershed, morphological, contour analysis)
+4. **Count** items using YOLO11n object counting (OpenCV watershed fallback)
 5. **Look up** nutrition data from USDA, Open Food Facts, or the built-in database
-6. **Edit** quantities and portions before saving
+6. **Edit** food names, quantities, and portions before saving
 7. **Save** to CSV and track trends on the interactive dashboard
 
 ---
@@ -24,19 +24,21 @@ NutriSnap AI turns a meal photo into structured nutrition data in seconds:
 
 ### Detection & Classification
 - **Multi-model ensemble food classification** — 3 parallel HuggingFace models with majority voting and confidence-weighted fusion
-- **Confidence-weighted fusion** with top candidate display showing vote counts per model
+- **Confidence-weighted fusion** with improved scoring (70% max + 30% weighted avg, gentle majority boost capped at 1.4×) and top candidate display showing vote counts per model
 - **Upgraded YOLOv8 detection** — configurable model selection (yolov8n/s/m) with automatic fallback to yolov8n on load failure
-- **Advanced item counting** — 3-signal OpenCV pipeline: watershed segmentation, morphological separation, Canny edge contours with median fusion
+- **Advanced item counting** — YOLO11n primary counting model with OpenCV watershed fallback; 3-signal pipeline (watershed, morphological, Canny contours) as secondary fallback
+- **AI-powered item counting (YOLO11n)** — model counts detected objects in each food crop, overriding heuristic estimates
 - **Quantity estimation** — data-driven `COUNT_RULES` tables with aspect-ratio correction for wide bounding boxes (side-by-side items)
 - **100+ per-unit weights** in `UNIT_WEIGHTS` covering proteins, breads, pizza, Mexican, Asian, breakfast, snacks, fruits, desserts, sandwiches, and burgers
 - **20 food family hierarchies** in `FOOD_HIERARCHY` for deduplication (e.g., chicken → wings/drumstick/breast/thigh/nuggets/tenders)
 - **34-entry `HF_TO_DB_MAP`** translating HuggingFace classifier labels to local nutrition database keys
-- **Fuzzy matching** via `difflib.get_close_matches` + substring fallback for robust food name resolution
+- **Fuzzy matching** via `difflib.get_close_matches` with stricter substring rules + fallback for robust food name resolution
 
-### User-Editable Quantities
-- **Gradio UI**: interactive dataframe appears after analysis — edit Quantity/Grams columns, click Recalculate, then Save
-- **HTML fallback UI**: inline number inputs in results table with client-side Recalculate button
-- Edited values override AI estimates in CSV log and dashboard calculations
+### User-Editable Quantities & Food Names
+- **User-correctable food names with auto-recalculation** — fix misidentified foods and recompute all nutrition values instantly
+- **Gradio UI**: interactive dataframe appears after analysis — edit Food, Quantity, and Grams columns; click Recalculate to look up the corrected food name in the database and recompute all nutrition values, then Save
+- **HTML fallback UI**: food name is an editable text input alongside inline number inputs for quantity/grams; client-side Recalculate button looks up the new food and recomputes all values
+- Edited values (including corrected food names) override AI estimates in CSV log and dashboard calculations
 
 ### User Interface
 - **5-tab Gradio interface**: Upload & Analyze, Dashboard, Food Log, Nutrition Tips, Settings
@@ -105,8 +107,8 @@ NutriSnap AI turns a meal photo into structured nutrition data in seconds:
                                     │
                ┌────────────────────▼────────────────────┐
                │  Stage 4: Advanced Counting              │
-               │  (watershed + morphological + contour    │
-               │   → median fusion, clamped to max)       │
+               │  (YOLO11n primary → OpenCV watershed     │
+               │   fallback if model fails)               │
                └────────────────────┬────────────────────┘
                                     │
                ┌────────────────────▼────────────────────┐
@@ -115,7 +117,7 @@ NutriSnap AI turns a meal photo into structured nutrition data in seconds:
                └────────────────────┬────────────────────┘
                                     │
                ┌────────────────────▼────────────────────┐
-               │  Stage 6: User Quantity Editing          │
+               │  Stage 6: User Food Name & Quantity Editing │
                │  → Recalculate → Save to CSV             │
                └─────────────────────────────────────────┘
 ```
@@ -131,7 +133,13 @@ Each YOLO bounding box is cropped and passed to 3 HuggingFace models in parallel
 - `nateraw/food` (ViT, weight 1.0) — Food-101 specialized
 - `Kaludi/food-category-classification-v2.0` (ViT, weight 0.7) — broader food categories
 
-Predictions are fused via **majority voting** (≥2 models agree) with **confidence-weighted scoring** to break ties. Labels are resolved through `HF_TO_DB_MAP` and fuzzy matching against `NUTRITION_DB`. If the ensemble produces no valid result, the system falls back to the single primary model.
+Predictions are fused via **majority voting** (≥2 models agree) with an improved **confidence-weighted scoring** algorithm:
+- **Score composition**: 70% max confidence + 30% weighted average across models
+- **Gentle majority boost**: +20% score per additional model vote, capped at 1.4× (replaces the aggressive 1.5× multiplier)
+- **Food group hierarchy merge**: prevents duplicates by consolidating related labels (e.g., "chicken" and "chicken_wings" are merged into a single entry using `FOOD_HIERARCHY`)
+- **Improved fuzzy matching**: stricter substring rules via `difflib.get_close_matches` reduce false positive label collisions
+
+Labels are resolved through `HF_TO_DB_MAP` and fuzzy matching against `NUTRITION_DB`. If the ensemble produces no valid result, the system falls back to the single primary model.
 
 ### Stage 3: Sub-Region Scan
 Skipped when ≥2 YOLO detections have confidence >0.6 (indicating YOLO already found the main items). Otherwise, the image is divided into a grid (2×2, then 3×3) and uncovered regions are classified with the ensemble/single model to find missed food items (confidence ≥0.3). Duplicate food names are avoided.
@@ -139,7 +147,7 @@ Skipped when ≥2 YOLO detections have confidence >0.6 (indicating YOLO already 
 If no detections exist after all 3 stages, the full image is classified as a last resort.
 
 ### Stage 4: Advanced Counting (HOW MANY)
-No reliable pre-trained food-counting model exists for CPU inference, so NutriSnap uses an improved OpenCV approach with 3 independent signals:
+NutriSnap uses **YOLO11n** as the primary counting model — it counts detected objects within each food crop and the result overrides the heuristic entirely. If the counting model fails, the system falls back to an improved OpenCV approach with 3 independent signals:
 
 1. **Canny edge contours** — Gaussian blur → Canny edge detection → external contour counting (filtered by minimum area)
 2. **Watershed segmentation** — Otsu threshold → morphological opening → distance transform → connected components as markers → component count
@@ -160,8 +168,8 @@ For each detected food item, nutrition data is retrieved via a 5-step fallback:
 
 Successful lookups are cached for 7 days.
 
-### Stage 6: User Quantity Editing → Save
-After analysis, an editable table displays each detected item with Food name, Quantity, Grams, Calories, Protein, Carbs, and Fat. Users can adjust quantities and gram weights, click **Recalculate** to recompute nutrition from per-100g rates, then **Save Meal** to append to `meal_log.csv`. Edited values override AI estimates in the CSV log and dashboard.
+### Stage 6: User Quantity & Food Name Editing → Save
+After analysis, an editable table displays each detected item with Food name, Quantity, Grams, Calories, Protein, Carbs, and Fat. Users can correct the food name (not just quantities), adjust gram weights, and click **Recalculate** to look up the corrected food in the database and recompute all nutrition from per-100g rates, then **Save Meal** to append to `meal_log.csv`. Edited values override AI estimates in the CSV log and dashboard.
 
 ### Deduplication
 - Removes generic items (e.g., "chicken") when a specific variant (e.g., "chicken_wings") overlaps with IoU > 0.3
@@ -178,6 +186,7 @@ After analysis, an editable table displays each detected item with Food name, Qu
 | `NUTRISNAP_YOLO_MODEL` | `yolov8m.pt` | YOLO detection model file |
 | `NUTRISNAP_YOLO_CONF` | `0.20` | Detection confidence threshold |
 | `NUTRISNAP_ENSEMBLE_ENABLED` | `true` | Enable/disable multi-model ensemble |
+| `NUTRISNAP_COUNT_MODEL` | `yolo11n.pt` | YOLO model for item counting within crops |
 | `NUTRISNAP_COUNT_MODE` | `accurate` | Counting mode: `accurate` (watershed + morphological + contour) or `fast` (Canny-only) |
 
 Set them before launching:
@@ -187,6 +196,7 @@ Set them before launching:
 export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
 export NUTRISNAP_YOLO_CONF="0.25"
 export NUTRISNAP_ENSEMBLE_ENABLED="true"
+export NUTRISNAP_COUNT_MODEL="yolo11n.pt"
 export NUTRISNAP_COUNT_MODE="accurate"
 ./start.sh
 ```
@@ -196,6 +206,7 @@ REM Windows
 set NUTRISNAP_YOLO_MODEL=yolov8m.pt
 set NUTRISNAP_YOLO_CONF=0.25
 set NUTRISNAP_ENSEMBLE_ENABLED=true
+set NUTRISNAP_COUNT_MODEL=yolo11n.pt
 set NUTRISNAP_COUNT_MODE=accurate
 start.bat
 ```
@@ -218,13 +229,15 @@ If the configured model fails to load (e.g., download error), the app automatica
 | `nateraw/food` | ViT | 1.0 | Trained on Food-101 dataset, specialized for food recognition |
 | `Kaludi/food-category-classification-v2.0` | ViT | 0.7 | Broader food categories, lower weight in fusion |
 
-All 3 models run in parallel on each YOLO crop. Predictions are resolved through label normalization, fuzzy matching, and majority voting. Models that fail to load are silently skipped — the ensemble degrades gracefully to however many models are available.
+All 3 models run in parallel on each YOLO crop. Predictions are resolved through label normalization, fuzzy matching, and majority voting with an improved fusion algorithm: score = 70% max confidence + 30% weighted average, with a gentle majority boost (+20% per additional vote, capped at 1.4×). The food group hierarchy merge prevents duplicate entries (e.g., "chicken" and "chicken_wings" are consolidated). Models that fail to load are silently skipped — the ensemble degrades gracefully to however many models are available.
 
 ---
 
 ## Counting Approach
 
-No reliable pre-trained food-counting model is available for CPU inference. NutriSnap uses an improved OpenCV approach that combines 3 independent counting signals:
+NutriSnap uses **YOLO11n** as the primary counting model to count detected objects within each food crop. The model is configured via the `NUTRISNAP_COUNT_MODEL` environment variable (defaults to `yolo11n.pt`). The counting model result **overrides the heuristic entirely** when successful.
+
+When the counting model fails (e.g., load error or inference failure), NutriSnap falls back to an improved OpenCV approach that combines 3 independent counting signals:
 
 | Signal | Technique | Strengths |
 |---|---|---|
@@ -234,7 +247,7 @@ No reliable pre-trained food-counting model is available for CPU inference. Nutr
 
 **Fusion**: The median of all 3 signals is taken (robust to outliers), then clamped to the food-specific maximum from `MAX_COUNTS`.
 
-**Blending with heuristics**:
+**Blending with heuristics** (fallback only):
 - **Accurate mode** (default): 50% heuristic + 50% texture count — best overall accuracy
 - **Fast mode**: 60% heuristic + 40% texture (Canny only) — faster but less refined
 
@@ -242,21 +255,21 @@ Set `NUTRISNAP_COUNT_MODE=fast` if analysis is too slow on your hardware.
 
 ---
 
-## User-Editable Quantities
+## User-Editable Quantities & Food Names
 
 ### Gradio UI
-After analysis, an interactive dataframe appears below the results with columns: **Food**, **Quantity**, **Grams**, **Calories**, **Protein (g)**, **Carbs (g)**, **Fat (g)**. All numeric columns are editable:
-1. Edit the Quantity or Grams values directly in the table
-2. Click **🔄 Recalculate Nutrition** to recompute all nutrition values from per-100g rates
+After analysis, an interactive dataframe appears below the results with columns: **Food**, **Quantity**, **Grams**, **Calories**, **Protein (g)**, **Carbs (g)**, **Fat (g)**. The Food column is editable — users can correct misidentified foods, not just quantities:
+1. Edit the Food name, Quantity, or Grams values directly in the table
+2. Click **🔄 Recalculate Nutrition** — the corrected food name is looked up in the nutrition database and all nutrition values are recomputed from per-100g rates
 3. Click **💾 Save Meal** to log the edited values to CSV
 
 ### HTML Fallback UI
-After analysis, each detected food item shows with inline number inputs for quantity and grams:
-1. Adjust the quantity/grams values in the input fields
-2. Click **🔄 Recalculate Nutrition** — client-side JavaScript recomputes calories and macros using per-100g rates
+After analysis, each detected food item shows with an editable text input for the food name alongside inline number inputs for quantity and grams:
+1. Correct the food name in the text input, and adjust quantity/grams as needed
+2. Click **🔄 Recalculate Nutrition** — client-side JavaScript looks up the new food in the database and recomputes calories and macros using per-100g rates
 3. Click **💾 Save Meal** to log the adjusted values
 
-Edited values override AI estimates in the CSV log and are reflected in dashboard charts and statistics.
+Edited values (including corrected food names) override AI estimates in the CSV log and are reflected in dashboard charts and statistics.
 
 ---
 
@@ -310,6 +323,7 @@ python app.py --fallback       # Fallback HTML UI
 # Use higher-accuracy YOLO model + ensemble
 export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
 export NUTRISNAP_ENSEMBLE_ENABLED="true"
+export NUTRISNAP_COUNT_MODEL="yolo11n.pt"
 export NUTRISNAP_COUNT_MODE="accurate"
 python app.py
 ```
@@ -408,7 +422,7 @@ When running with `--fallback`, the app starts a lightweight HTTP server on port
 ## Usage
 
 ### Tab 1: Upload & Analyze
-Upload a meal photo (JPG, PNG, WEBP). Click **Analyze Food** to run the multi-stage detection pipeline. Review detected items, nutrition table, annotated image, and candidate predictions. Edit quantities in the interactive table if needed, click **Recalculate Nutrition**, then **Save Meal** to log results to CSV. Use the **Manual Entry** form if detection fails.
+Upload a meal photo (JPG, PNG, WEBP). Click **Analyze Food** to run the multi-stage detection pipeline. Review detected items, nutrition table, annotated image, and candidate predictions. Correct food names, edit quantities in the interactive table if needed, click **Recalculate Nutrition**, then **Save Meal** to log results to CSV. Use the **Manual Entry** form if detection fails.
 
 ### Tab 2: Dashboard
 View 4 Plotly charts and 3 summary cards showing your meal history trends. Click **Refresh Dashboard** to reload data.
@@ -427,7 +441,7 @@ Reference guide with Recommended Daily Intake (RDI) values, tracking best practi
 
 ### Save / Edit / Delete Workflow
 1. Analyze a photo → review results
-2. Edit quantities in the interactive table → Recalculate (optional)
+2. Correct food names, edit quantities in the interactive table → Recalculate (optional)
 3. Click **Save Meal** → each detected food item is appended to `meal_log.csv`
 4. View saved meals in the **Food Log** tab
 5. Delete individual rows by index, or **Clear All** to reset
@@ -443,6 +457,7 @@ Reference guide with Recommended Daily Intake (RDI) values, tracking best practi
 | `NUTRISNAP_YOLO_MODEL` | `yolov8m.pt` | YOLO model file (`yolov8n.pt`, `yolov8s.pt`, `yolov8m.pt`) |
 | `NUTRISNAP_YOLO_CONF` | `0.20` | YOLO detection confidence threshold (0.0–1.0) |
 | `NUTRISNAP_ENSEMBLE_ENABLED` | `true` | Enable multi-model ensemble (`true`/`false`) |
+| `NUTRISNAP_COUNT_MODEL` | `yolo11n.pt` | YOLO model for item counting within crops |
 | `NUTRISNAP_COUNT_MODE` | `accurate` | Counting mode: `accurate` (3-signal median) or `fast` (Canny-only) |
 
 ### Configuration File: `nutri_config.json`

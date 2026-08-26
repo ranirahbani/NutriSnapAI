@@ -45,6 +45,9 @@ YOLO_CONF_THRESHOLD = float(os.environ.get("NUTRISNAP_YOLO_CONF", "0.20"))
 ENSEMBLE_ENABLED = os.environ.get("NUTRISNAP_ENSEMBLE_ENABLED", "true").lower() == "true"
 COUNT_MODE = os.environ.get("NUTRISNAP_COUNT_MODE", "accurate")  # "accurate" (watershed) or "fast" (canny-only)
 
+# Counting model configuration
+COUNT_MODEL_NAME = os.environ.get("NUTRISNAP_COUNT_MODEL", "yolo11n.pt")
+
 # State: last analysis results for Save Meal button
 _last_analysis_results = None
 
@@ -498,10 +501,14 @@ def fuzzy_match_food(name, threshold=0.6):
     matches = difflib.get_close_matches(name_clean, list(NUTRITION_DB.keys()), n=1, cutoff=threshold)
     if matches:
         return matches[0]
-    # Also try partial matching: if any DB key is a substring
+    # Also try partial matching: only if the match is substantial (>70% of the longer string)
     for db_key in NUTRITION_DB:
-        if db_key in name_clean or name_clean in db_key:
-            return db_key
+        shorter = min(len(db_key), len(name_clean))
+        longer = max(len(db_key), len(name_clean))
+        if shorter >= 4 and (db_key in name_clean or name_clean in db_key):
+            # Only accept if the matched portion is >70% of the longer string
+            if shorter / longer >= 0.7:
+                return db_key
     return name_clean
 
 # ============================================
@@ -713,6 +720,22 @@ def load_yolo():
         return False
 
 
+# Global counting model
+count_model = None
+
+def load_count_model():
+    """Load YOLO11n model for item counting within food crops."""
+    global count_model
+    try:
+        from ultralytics import YOLO
+        count_model = YOLO(COUNT_MODEL_NAME)
+        print(f"[NutriSnap] Counting model ({COUNT_MODEL_NAME}) loaded successfully")
+        return True
+    except Exception as e:
+        print(f"[NutriSnap] Counting model failed to load: {e}")
+        return False
+
+
 def load_hf_classifier():
     """Load HuggingFace food classifier as fallback."""
     global hf_classifier, hf_processor
@@ -741,6 +764,19 @@ class EnsembleClassifier:
         {"name": "nateraw/food", "weight": 1.0},
         {"name": "Kaludi/food-category-classification-v2.0", "weight": 0.7},
     ]
+
+    FOOD_GROUPS = {
+        "chicken_group": ["chicken", "chicken_wings", "fried_chicken", "chicken_drumstick",
+                          "chicken_breast", "chicken_thigh", "chicken_nuggets", "chicken_tenders"],
+        "egg_group": ["egg", "eggs", "omelette", "scrambled_eggs"],
+        "taco_group": ["taco", "tacos"],
+        "pasta_group": ["pasta", "spaghetti_bolognese", "spaghetti_carbonara", "lasagna"],
+        "cake_group": ["cake", "chocolate_cake", "cheesecake", "apple_pie"],
+        "bread_group": ["bread", "garlic_bread", "bread_pudding"],
+        "salad_group": ["salad", "caesar_salad", "greek_salad"],
+        "soup_group": ["soup", "lobster_bisque", "miso_soup"],
+        "sandwich_group": ["sandwich", "club_sandwich", "pulled_pork_sandwich"],
+    }
 
     def __init__(self):
         self.models = []  # list of (processor, model, weight, name)
@@ -805,20 +841,22 @@ class EnsembleClassifier:
 
     def _fuse_predictions(self, all_predictions):
         """
-        Apply majority voting + confidence-weighted fusion.
-        Returns sorted list of {"label", "confidence", "vote_count"}.
+        Apply improved majority voting + confidence-weighted fusion.
+        Algorithm:
+        - Weight = model_weight * confidence (not just confidence * weight)
+        - Score = max_confidence * (1 + 0.2 * (vote_count - 1)) for gentle majority boost
+        - This ensures a single high-confidence prediction (0.8) always beats
+          two low-confidence votes (0.2 + 0.2)
         """
         if not all_predictions:
             return []
 
-        # Normalize labels through _resolve_food_name and group
-        label_scores = {}  # resolved_label -> {"weighted_sum": float, "vote_count": int, "raw_labels": set}
+        label_scores = {}
 
         for raw_label, confidence, weight in all_predictions:
-            # Try to resolve to a DB key
             resolved = _resolve_food_name(raw_label)
             if not resolved:
-                resolved = raw_label  # keep raw if can't resolve
+                resolved = raw_label
 
             if resolved not in label_scores:
                 label_scores[resolved] = {"weighted_sum": 0.0, "vote_count": 0, "max_conf": 0.0, "raw_labels": set()}
@@ -828,23 +866,57 @@ class EnsembleClassifier:
             label_scores[resolved]["max_conf"] = max(label_scores[resolved]["max_conf"], confidence)
             label_scores[resolved]["raw_labels"].add(raw_label)
 
-        # Score: majority vote wins; ties broken by weighted_sum
+        # ── Merge labels in the same food group ──
+        label_scores = self._merge_food_groups(label_scores)
+
         results = []
         for label, data in label_scores.items():
-            # Final score: vote_count acts as multiplier for majority gate
-            has_majority = data["vote_count"] >= 2
-            fused_confidence = data["weighted_sum"] / max(1, data["vote_count"])
-            # Boost majority labels
-            final_score = fused_confidence * (1.5 if has_majority else 1.0)
+            # Gentle majority boost: +20% per additional vote, capped at 1.4x
+            majority_bonus = min(1.0 + 0.2 * max(0, data["vote_count"] - 1), 1.4)
+            avg_conf = data["weighted_sum"] / max(1, data["vote_count"])
+            # Score: 70% best single prediction + 30% average, with gentle bonus
+            final_score = (0.7 * data["max_conf"] + 0.3 * avg_conf) * majority_bonus
             results.append({
                 "label": label,
                 "confidence": round(min(final_score, 1.0), 4),
                 "vote_count": data["vote_count"],
             })
 
-        # Sort by: majority first, then by confidence
-        results.sort(key=lambda x: (x["vote_count"] >= 2, x["confidence"]), reverse=True)
+        results.sort(key=lambda x: x["confidence"], reverse=True)
         return results[:3]
+
+    def _merge_food_groups(self, label_scores):
+        """Merge labels belonging to the same food group, keeping the most specific label."""
+        merged = {}
+        assigned = set()
+
+        for group_name, members in self.FOOD_GROUPS.items():
+            # Find all labels in this group that are present in label_scores
+            present = [(lbl, label_scores[lbl]) for lbl in members if lbl in label_scores and lbl not in assigned]
+            if len(present) <= 1:
+                continue
+
+            # Pick the most specific label (prefer longer name, then highest confidence)
+            present.sort(key=lambda x: (len(x[0]), x[1]["max_conf"]), reverse=True)
+            winner_label = present[0][0]
+
+            # Merge all into the winner
+            combined = {"weighted_sum": 0.0, "vote_count": 0, "max_conf": 0.0, "raw_labels": set()}
+            for lbl, data in present:
+                combined["weighted_sum"] += data["weighted_sum"]
+                combined["vote_count"] += data["vote_count"]
+                combined["max_conf"] = max(combined["max_conf"], data["max_conf"])
+                combined["raw_labels"].update(data["raw_labels"])
+                assigned.add(lbl)
+
+            merged[winner_label] = combined
+
+        # Add non-grouped labels
+        for lbl, data in label_scores.items():
+            if lbl not in assigned:
+                merged[lbl] = data
+
+        return merged
 
 
 # Global ensemble instance (loaded lazily on first use)
@@ -1034,6 +1106,47 @@ def estimate_portion(bbox, img_shape, food_name=""):
     return label, mult, grams
 
 
+def count_with_model(food_name, bbox, image_bgr):
+    """
+    Use YOLO11n to count individual food items within a bounding box crop.
+    Returns integer count, or None if model unavailable or fails.
+    """
+    global count_model
+    if count_model is None:
+        return None
+
+    key = food_name.lower().strip().replace(" ", "_")
+    if key not in COUNTABLE_FOODS:
+        return None
+
+    try:
+        x1, y1, x2, y2 = [int(c) for c in bbox]
+        crop = image_bgr[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        # Run YOLO on the crop to detect individual objects
+        from PIL import Image
+        crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        crop_pil = Image.fromarray(crop_rgb)
+
+        # Use lower confidence for counting (we want to find all items)
+        results = count_model(crop_pil, verbose=False, conf=0.20, iou=0.5)
+
+        if results and len(results) > 0:
+            boxes = results[0].boxes
+            if boxes is not None and len(boxes) > 0:
+                detected_count = len(boxes)
+                # Clamp to reasonable range for this food
+                max_for_food = MAX_COUNTS.get(key, 8)
+                return min(max(1, detected_count), max_for_food)
+
+        return None  # No detections — fall back to OpenCV
+    except Exception as e:
+        print(f"[NutriSnap] Count model error for {food_name}: {e}")
+        return None
+
+
 def advanced_count_from_texture(food_name, bbox, image_bgr):
     """
     Use multiple CV techniques (contours, watershed, morphological) to estimate
@@ -1195,29 +1308,38 @@ def _heuristic_count(food_name, bbox, img_shape):
 
 
 def estimate_item_count(food_name, bbox, img_shape, image_bgr=None):
-    """Estimate item count with texture-based refinement (accurate or fast mode)."""
+    """Estimate item count: model-based first, then texture-based, then heuristic."""
     count, desc, grams = _heuristic_count(food_name, bbox, img_shape)
 
-    # Texture-based refinement for countable foods
     if image_bgr is not None:
-        if COUNT_MODE == "accurate":
-            texture_count = advanced_count_from_texture(food_name, bbox, image_bgr)
-        else:
-            texture_count = _fast_count_from_texture(food_name, bbox, image_bgr)
+        # Priority 1: Try counting model (YOLO11n)
+        model_count = count_with_model(food_name, bbox, image_bgr)
 
-        if texture_count is not None and count > 0:
-            # Blend: 50/50 for accurate mode, 60/40 heuristic/texture for fast mode
-            if COUNT_MODE == "accurate":
-                blended = round(0.5 * count + 0.5 * texture_count)
-            else:
-                blended = round(0.6 * count + 0.4 * texture_count)
-            blended = max(1, blended)
-            if blended != count:
-                # Recalculate grams proportionally
+        if model_count is not None:
+            # Model count overrides heuristic entirely
+            if model_count != count:
                 per_item_grams = (grams or 100) / max(1, count)
-                grams = round(blended * per_item_grams)
-                count = blended
-                desc = f"{blended} items (refined)"
+                grams = round(model_count * per_item_grams)
+                count = model_count
+                desc = f"{model_count} items (AI counted)"
+        else:
+            # Priority 2: Fall back to texture-based counting
+            if COUNT_MODE == "accurate":
+                texture_count = advanced_count_from_texture(food_name, bbox, image_bgr)
+            else:
+                texture_count = _fast_count_from_texture(food_name, bbox, image_bgr)
+
+            if texture_count is not None and count > 0:
+                if COUNT_MODE == "accurate":
+                    blended = round(0.5 * count + 0.5 * texture_count)
+                else:
+                    blended = round(0.6 * count + 0.4 * texture_count)
+                blended = max(1, blended)
+                if blended != count:
+                    per_item_grams = (grams or 100) / max(1, count)
+                    grams = round(blended * per_item_grams)
+                    count = blended
+                    desc = f"{blended} items (refined)"
 
     return count, desc, grams
 
@@ -2349,53 +2471,69 @@ def build_ui():
             return "✅ Meal saved!", None
 
         def on_recalculate(df_data, state):
-            """Recalculate nutrition based on user-edited quantities."""
+            """Recalculate nutrition based on user-edited food names, quantities, and grams."""
             if df_data is None or state is None:
                 return df_data, state, "⚠️ No data to recalculate."
             try:
                 updated_results = []
                 new_rows = []
-                for i, row in enumerate(df_data.values.tolist() if hasattr(df_data, 'values') else df_data):
-                    food = row[0] if isinstance(row[0], str) else str(row[0])
-                    quantity = max(1, int(float(row[1])))
-                    grams = max(1, int(float(row[2])))
+                rows = df_data.values.tolist() if hasattr(df_data, 'values') else df_data
+                for i, row in enumerate(rows):
+                    food_display = str(row[0]).strip() if row[0] else ""
+                    quantity = max(1, int(float(row[1]))) if row[1] else 1
+                    grams = max(1, int(float(row[2]))) if row[2] else 100
 
-                    # Look up per-100g nutrition from NUTRITION_DB
-                    food_key = food.lower().replace(" ", "_")
+                    # Resolve the (possibly user-edited) food name to a DB key
+                    food_key = food_display.lower().replace(" ", "_")
+                    resolved_key = None
+
+                    # Direct match
                     if food_key in NUTRITION_DB:
-                        nut = NUTRITION_DB[food_key]
+                        resolved_key = food_key
+                    else:
+                        # Try fuzzy match
+                        resolved_key = fuzzy_match_food(food_key)
+                        if resolved_key and resolved_key not in NUTRITION_DB:
+                            resolved_key = None
+
+                    if resolved_key and resolved_key in NUTRITION_DB:
+                        nut = NUTRITION_DB[resolved_key]
                         cal_per_100g = nut.get("calories", 200)
                         pro_per_100g = nut.get("protein", 5)
                         carb_per_100g = nut.get("carbs", 20)
                         fat_per_100g = nut.get("fat", 8)
-                    else:
-                        # Use original values proportionally
-                        orig = state[i] if i < len(state) else {}
+                    elif i < len(state) and state[i]:
+                        # Fall back to proportional scaling from original values
+                        orig = state[i]
                         orig_grams = orig.get("grams", 100) or 100
-                        cal_per_100g = (orig.get("calories", 200) / orig_grams) * 100
-                        pro_per_100g = (orig.get("protein", 5) / orig_grams) * 100
-                        carb_per_100g = (orig.get("carbs", 20) / orig_grams) * 100
-                        fat_per_100g = (orig.get("fat", 8) / orig_grams) * 100
+                        cal_per_100g = (orig.get("calories", 200) / max(1, orig_grams)) * 100
+                        pro_per_100g = (orig.get("protein", 5) / max(1, orig_grams)) * 100
+                        carb_per_100g = (orig.get("carbs", 20) / max(1, orig_grams)) * 100
+                        fat_per_100g = (orig.get("fat", 8) / max(1, orig_grams)) * 100
+                    else:
+                        cal_per_100g, pro_per_100g, carb_per_100g, fat_per_100g = 200, 5, 20, 8
 
                     calories = round(cal_per_100g * grams / 100)
                     protein = round(pro_per_100g * grams / 100, 1)
                     carbs = round(carb_per_100g * grams / 100, 1)
                     fat = round(fat_per_100g * grams / 100, 1)
 
-                    new_rows.append([food, quantity, grams, calories, protein, carbs, fat])
+                    new_rows.append([food_display, quantity, grams, calories, protein, carbs, fat])
 
-                    # Update state for saving
+                    # Update state for saving (including corrected food name)
                     if i < len(state):
+                        state[i]["food"] = resolved_key or food_key
                         state[i]["count"] = quantity
                         state[i]["grams"] = grams
                         state[i]["calories"] = calories
                         state[i]["protein"] = protein
                         state[i]["carbs"] = carbs
                         state[i]["fat"] = fat
+                        state[i]["portion"] = f"{quantity}x {grams}g"
 
                     updated_results.append(state[i] if i < len(state) else {})
 
-                return new_rows, state, "✅ Nutrition recalculated!"
+                return new_rows, state, "✅ Nutrition recalculated! Food names matched to database."
             except Exception as e:
                 return df_data, state, f"⚠️ Error: {e}"
 
@@ -2866,6 +3004,7 @@ if __name__ == "__main__":
     print("[NutriSnap] Loading models...")
     load_yolo()
     load_hf_classifier()
+    load_count_model()
 
     if "--fallback" in _sys.argv:
         print("[NutriSnap] --fallback flag detected. Starting HTML interface...")
