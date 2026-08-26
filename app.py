@@ -754,7 +754,9 @@ def estimate_portion(bbox, img_shape, food_name=""):
 def estimate_item_count(food_name, bbox, img_shape):
     """
     Estimate number of individual items based on food type and bbox size.
-    Returns (count, description) tuple.
+    Returns (count, description, portion_grams) tuple.
+    portion_grams is non-None only for portion-based foods (fries, nachos)
+    where grams vary by portion size instead of item count.
     """
     img_area = img_shape[0] * img_shape[1]
     bbox_area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
@@ -765,101 +767,101 @@ def estimate_item_count(food_name, bbox, img_shape):
     # Pizza: distinguish between slice vs full pizza
     if food_lower in ["pizza"]:
         if area_ratio > 0.4:  # Takes up most of image = full pizza
-            return 8, "Full pizza (8 slices)"
+            return 8, "Full pizza (8 slices)", None
         elif area_ratio > 0.2:  # Medium area = half pizza or 3-4 slices
-            return 4, "Half pizza (4 slices)"
+            return 4, "Half pizza (4 slices)", None
         elif area_ratio > 0.1:  # Smaller = 2-3 slices
-            return 2, "2 slices"
+            return 2, "2 slices", None
         else:  # Small = single slice
-            return 1, "1 slice"
+            return 1, "1 slice", None
     
     # Chicken wings: count individual wings
     elif food_lower in ["chicken_wings", "chicken wings"]:
         if area_ratio > 0.35:
-            return 6, "6 wings"
+            return 6, "6 wings", None
         elif area_ratio > 0.2:
-            return 4, "4 wings"
+            return 4, "4 wings", None
         elif area_ratio > 0.1:
-            return 3, "3 wings"
+            return 3, "3 wings", None
         elif area_ratio > 0.05:
-            return 2, "2 wings"
+            return 2, "2 wings", None
         else:
-            return 1, "1 wing"
+            return 1, "1 wing", None
     
-    # Fries: portion-based, not countable
+    # Fries: portion-based, not countable — return portion-adjusted grams
     elif food_lower in ["fries", "french_fries"]:
         if area_ratio > 0.3:
-            return 1, "Large portion"
+            return 1, "Large portion", 180
         elif area_ratio > 0.15:
-            return 1, "Medium portion"
+            return 1, "Medium portion", 130
         else:
-            return 1, "Small portion"
+            return 1, "Small portion", 80
     
     # Donuts: count individual
     elif food_lower in ["donut", "donuts"]:
         if area_ratio > 0.3:
-            return 3, "3 donuts"
+            return 3, "3 donuts", None
         elif area_ratio > 0.15:
-            return 2, "2 donuts"
+            return 2, "2 donuts", None
         else:
-            return 1, "1 donut"
+            return 1, "1 donut", None
     
     # Tacos: count individual
     elif food_lower in ["tacos", "taco"]:
         if area_ratio > 0.3:
-            return 3, "3 tacos"
+            return 3, "3 tacos", None
         elif area_ratio > 0.15:
-            return 2, "2 tacos"
+            return 2, "2 tacos", None
         else:
-            return 1, "1 taco"
+            return 1, "1 taco", None
     
     # Sushi: count pieces
     elif food_lower in ["sushi"]:
         if area_ratio > 0.3:
-            return 8, "8 pieces"
+            return 8, "8 pieces", None
         elif area_ratio > 0.15:
-            return 6, "6 pieces"
+            return 6, "6 pieces", None
         elif area_ratio > 0.08:
-            return 4, "4 pieces"
+            return 4, "4 pieces", None
         else:
-            return 2, "2 pieces"
+            return 2, "2 pieces", None
     
     # Eggs: count individual
     elif food_lower in ["eggs", "egg"]:
         if area_ratio > 0.2:
-            return 3, "3 eggs"
+            return 3, "3 eggs", None
         elif area_ratio > 0.1:
-            return 2, "2 eggs"
+            return 2, "2 eggs", None
         else:
-            return 1, "1 egg"
+            return 1, "1 egg", None
     
     # Pancakes/waffles: count individual
     elif food_lower in ["pancakes"]:
         if area_ratio > 0.25:
-            return 3, "3 pancakes"
+            return 3, "3 pancakes", None
         elif area_ratio > 0.12:
-            return 2, "2 pancakes"
+            return 2, "2 pancakes", None
         else:
-            return 1, "1 pancake"
+            return 1, "1 pancake", None
     
     elif food_lower in ["waffles"]:
         if area_ratio > 0.25:
-            return 2, "2 waffles"
+            return 2, "2 waffles", None
         else:
-            return 1, "1 waffle"
+            return 1, "1 waffle", None
     
-    # Nachos: usually a portion, not counted individually
+    # Nachos: usually a portion, not counted individually — return portion-adjusted grams
     elif food_lower in ["nachos"]:
         if area_ratio > 0.3:
-            return 1, "Large portion"
+            return 1, "Large portion", 300
         elif area_ratio > 0.15:
-            return 1, "Medium portion"
+            return 1, "Medium portion", 200
         else:
-            return 1, "Small portion"
+            return 1, "Small portion", 120
     
     # Default: single item
     else:
-        return 1, "1 serving"
+        return 1, "1 serving", None
 
 
 def deduplicate_results(results):
@@ -897,7 +899,7 @@ def deduplicate_results(results):
                 if specific_to_generic.get(other_food) == food:
                     # Check bbox overlap
                     iou = bbox_iou(item["bbox"], other["bbox"])
-                    if iou > 0.2:  # Significant overlap
+                    if iou > 0.3:  # Significant overlap
                         has_specific_overlap = True
                         break
             
@@ -1133,12 +1135,18 @@ def analyze_image(image_path, status_callback=None):
         if x2 > x1 and y2 > y1:
             crop_pil = img_pil.crop((x1, y1, x2, y2))
             hf_results = classify_with_hf(crop_pil, top_k=3)
+            # HF results are sorted by confidence (highest first).
+            # Take the highest-confidence label that maps to a valid DB entry,
+            # but only if confidence >= 0.15. Otherwise fall back to YOLO label.
             resolved = None
             for hf_r in hf_results:
+                if hf_r["confidence"] < 0.15:
+                    continue
                 mapped = _resolve_food_name(hf_r["label"])
                 if mapped and mapped in NUTRITION_DB:
                     resolved = mapped
                     break
+            # HF ALWAYS overrides the YOLO/COCO label when a valid result exists
             food_name = resolved if resolved else coco_name
         else:
             food_name = coco_name
@@ -1212,20 +1220,26 @@ def analyze_image(image_path, status_callback=None):
         food_key = food.lower().replace(" ", "_")
         
         # Estimate item count based on bbox size
-        count, count_description = estimate_item_count(food, det["bbox"], img_shape)
+        count, count_description, portion_grams = estimate_item_count(food, det["bbox"], img_shape)
         det["count"] = count
         det["count_description"] = count_description
         
-        # Calculate grams: use unit weight for countable items, otherwise portion estimation
-        if food_key in UNIT_WEIGHTS:
+        # Calculate grams:
+        # - If estimate_item_count returned portion-adjusted grams (fries, nachos), use that
+        # - Else if food is in UNIT_WEIGHTS, use count * unit_weight
+        # - Else fall back to area-based portion estimation
+        if portion_grams is not None:
+            grams = portion_grams
+            portion_label = count_description
+        elif food_key in UNIT_WEIGHTS:
             grams = count * UNIT_WEIGHTS[food_key]
             portion_label = count_description
         else:
-            portion_label, portion_mult, fries_grams = estimate_portion(det["bbox"], img_shape, food_name=food)
-            if fries_grams is not None:
-                grams = fries_grams
+            portion_label, portion_mult, area_grams = estimate_portion(det["bbox"], img_shape, food_name=food)
+            if area_grams is not None:
+                grams = area_grams
             else:
-                typical_g = NUTRITION_DB.get(food, {}).get("typical_g", 150)
+                typical_g = NUTRITION_DB.get(food_key, NUTRITION_DB.get(food, {})).get("typical_g", 150)
                 grams = round(typical_g * portion_mult)
 
         nutr = calculate_nutrition(food, grams, status_callback=status_messages.append)
@@ -1265,9 +1279,9 @@ def analyze_image(image_path, status_callback=None):
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(img_np.shape[1], x2), min(img_np.shape[0], y2)
         if x2 > x1 and y2 > y1:
-            # Add 30% padding around bounding box for natural-looking thumbnails
-            pad_x = int((x2 - x1) * 0.3)
-            pad_y = int((y2 - y1) * 0.3)
+            # Add 35% padding around bounding box for natural-looking thumbnails
+            pad_x = int((x2 - x1) * 0.35)
+            pad_y = int((y2 - y1) * 0.35)
             crop_y1 = max(0, y1 - pad_y)
             crop_y2 = min(img_np.shape[0], y2 + pad_y)
             crop_x1 = max(0, x1 - pad_x)
