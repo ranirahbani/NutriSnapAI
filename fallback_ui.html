@@ -643,10 +643,12 @@ function renderResults(data) {
   html += '</div>';
 
   // ── Nutrition detail table ──
-  html += '<table class="results-table"><thead><tr><th>Food</th><th>Portion</th><th>Qty</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>';
+  html += '<p style="margin:12px 0 8px;font-size:0.85em;color:var(--text-secondary);font-style:italic;">💡 You can edit food names, quantities, and grams below — then click Recalculate to update nutrition values.</p>';
+  html += '<table class="results-table"><thead><tr><th>Food</th><th>Conf.</th><th>Portion</th><th>Qty</th><th>Grams</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr></thead><tbody>';
   data.items.forEach((it, idx) => {
     html += `<tr>
       <td><input type="text" class="food-input" value="${it.food}" data-idx="${idx}" style="width:120px;padding:4px;border:1px solid #ccc;border-radius:4px;font-size:0.85em;"></td>
+      <td>${Math.round((it.confidence || 0) * 100)}%</td>
       <td>${it.portion}</td>
       <td><input type="number" class="qty-input" value="${it.quantity || 1}" min="1" max="99" data-idx="${idx}" style="width:50px;padding:4px;border:1px solid #ccc;border-radius:4px;text-align:center;"></td>
       <td><input type="number" class="grams-input" value="${it.grams}" min="1" max="9999" data-idx="${idx}" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:4px;text-align:center;"></td>
@@ -801,7 +803,7 @@ async function loadDashboard() {
 function renderStats(s) {
   if (!s) { document.getElementById('statsGrid').innerHTML = ''; return; }
   document.getElementById('statsGrid').innerHTML = `
-    <div class="stat-card" style="background:linear-gradient(135deg,#2C7A4A,#1A5A3A)"><div class="value">${Math.round(s.total_meals)}</div><div class="label">📊 Total Meals</div></div>
+    <div class="stat-card" style="background:linear-gradient(135deg,#2C7A4A,#1A5A3A)"><div class="value">${Math.round(s.total_meals)}</div><div class="label">📊 Food Items Logged</div></div>
     <div class="stat-card" style="background:linear-gradient(135deg,#4CAF50,#388E3C)"><div class="value">${Math.round(s.total_calories).toLocaleString()}</div><div class="label">🔥 Total Calories</div></div>
     <div class="stat-card" style="background:linear-gradient(135deg,#1A5A3A,#0d3d22)"><div class="value">${Math.round(s.avg_per_meal)}</div><div class="label">📈 Avg per Meal</div></div>`;
 }

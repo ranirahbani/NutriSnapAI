@@ -1803,16 +1803,19 @@ def analyze_image(image_path, status_callback=None):
 
     # ── Stage 6: Build summary markdown ─────────────────────────────────────
     summary_lines = [f"### Detected {len(results)} food item(s)\n"]
-    summary_lines.append("| Food | Quantity | Portion (g) | Calories | Protein | Carbs | Fat |")
-    summary_lines.append("|------|----------|-------------|----------|---------|-------|-----|")
+    summary_lines.append("| Food | Confidence | Quantity | Portion (g) | Calories | Protein | Carbs | Fat |")
+    summary_lines.append("|------|------------|----------|-------------|----------|---------|-------|-----|")
     for r in results:
         name = r["food"].replace("_", " ").title()
         count = r.get('count', 1)
         count_desc = r.get('count_description', r.get('portion', '1 serving'))
         # Use count_description for quantity column if available
         quantity = count_desc if count_desc else f"{count} item(s)"
+        cands = r.get("candidates") or []
+        conf_val = cands[0].get("confidence", 0) if cands else r.get("yolo_conf", 0)
+        conf_str = f"{conf_val * 100:.0f}%"
         summary_lines.append(
-            f"| {name} | {quantity} | {r['grams']}g "
+            f"| {name} | {conf_str} | {quantity} | {r['grams']}g "
             f"| {r['calories']} | {r['protein']}g | {r['carbs']}g | {r['fat']}g |"
         )
     summary_lines.append(f"\n**Totals: {round(total_cal, 1)} cal | "
@@ -1887,7 +1890,7 @@ def build_dashboard():
     avg_cal = int(round(df["Calories"].mean()))
     stats = (f"<div style='display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;'>"
              f"<div style='background:{THEME_PRIMARY};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
-             f"<div style='font-size:1.8em;font-weight:700;'>{total_meals}</div><div style='opacity:0.85;font-size:0.9em;'>📊 Total Meals</div></div>"
+             f"<div style='font-size:1.8em;font-weight:700;'>{total_meals}</div><div style='opacity:0.85;font-size:0.9em;'>📊 Food Items Logged</div></div>"
              f"<div style='background:{THEME_ACCENT};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
              f"<div style='font-size:1.8em;font-weight:700;'>{total_cal:,}</div><div style='opacity:0.85;font-size:0.9em;'>🔥 Total Calories</div></div>"
              f"<div style='background:{THEME_SECONDARY};color:white;padding:14px 22px;border-radius:10px;flex:1;min-width:160px;text-align:center;'>"
@@ -2113,8 +2116,11 @@ def generate_meal_report(detections):
         total_pro += pro
         total_carb += carb
         total_fat += fat
+        cands = det.get("candidates") or []
+        conf_val = cands[0].get("confidence", 0) if cands else det.get("yolo_conf", 0)
+        conf_str = f"{conf_val * 100:.0f}%"
         rows_html += (
-            f"<tr><td>{name}</td><td>{quantity}</td><td>{grams}g</td>"
+            f"<tr><td>{name}</td><td>{conf_str}</td><td>{quantity}</td><td>{grams}g</td>"
             f"<td>{cal}</td><td>{pro}g</td><td>{carb}g</td><td>{fat}g</td></tr>\n"
         )
     html = f"""<!DOCTYPE html>
@@ -2144,7 +2150,7 @@ def generate_meal_report(detections):
 </div>
 <h2>Detected Foods ({len(detections)} item(s))</h2>
 <table>
-<tr><th>Food</th><th>Quantity</th><th>Portion (g)</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr>
+<tr><th>Food</th><th>Confidence</th><th>Quantity</th><th>Portion (g)</th><th>Calories</th><th>Protein</th><th>Carbs</th><th>Fat</th></tr>
 {rows_html}
 </table>
 <div class="totals">
@@ -2247,6 +2253,10 @@ def build_ui():
                         )
 
                 # Editable quantity table
+                with gr.Row(visible=False) as qty_instructions_row:
+                    gr.Markdown(
+                        "💡 **You can edit the table below** — correct food names, adjust quantities and grams, then click Recalculate to update nutrition values."
+                    )
                 with gr.Row(visible=False) as quantity_row:
                     quantity_df = gr.Dataframe(
                         headers=["Food", "Quantity", "Grams", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)"],
@@ -2354,7 +2364,7 @@ def build_ui():
         def on_analyze(file):
             global _last_analysis_results
             if file is None:
-                return None, "Please upload an image first.", "", [], None, gr.update(visible=False), gr.update(visible=False), None
+                return None, "Please upload an image first.", "", [], None, gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), None
             status_msgs = []
             def collect_status(msg):
                 status_msgs.append(msg)
@@ -2380,7 +2390,7 @@ def build_ui():
 
             show_qty = gr.update(visible=bool(df_rows))
             show_recalc = gr.update(visible=bool(df_rows))
-            return annotated, summary, status_text, thumbnails, df_rows if df_rows else None, show_qty, show_recalc, state_detections if state_detections else None
+            return annotated, summary, status_text, thumbnails, df_rows if df_rows else None, show_qty, show_qty, show_recalc, state_detections if state_detections else None
 
         def on_analyze_click():
             """Show spinner when analyze button is clicked."""
@@ -2551,7 +2561,7 @@ def build_ui():
         analyze_btn.click(
             fn=on_analyze, inputs=[input_image],
             outputs=[output_image, output_md, status_display, food_gallery,
-                     quantity_df, quantity_row, recalc_row, analysis_state],
+                     quantity_df, qty_instructions_row, quantity_row, recalc_row, analysis_state],
             js="(file) => { var el = document.getElementById('analysis-spinner'); if (el) el.classList.add('active'); return file; }"
         )
         # Hide spinner when analysis completes (via output change)
