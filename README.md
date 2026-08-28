@@ -41,7 +41,7 @@ NutriSnap AI turns a meal photo into structured nutrition data in seconds:
 - Edited values (including corrected food names) override AI estimates in CSV log and dashboard calculations
 
 ### User Interface
-- **5-tab Gradio interface**: Upload & Analyze, Dashboard, Food Log, Nutrition Tips, Settings
+- **6-tab Gradio interface**: Upload & Analyze, Dashboard, Food Log, Nutrition Tips, Settings, AI Assistant
 - **Fallback HTML/JS interface** (`fallback_ui.html`) that auto-activates if Gradio is unavailable
 - **`--fallback` CLI flag** to force the HTML interface
 - **Dark mode** with live toggle (persisted to config)
@@ -61,6 +61,12 @@ NutriSnap AI turns a meal photo into structured nutrition data in seconds:
 - **4 Plotly charts**: Daily Calorie Intake (bar), Macronutrient Distribution (pie), Weekly Calorie Trend (line), Top 5 Foods Eaten (horizontal bar)
 - **3 summary cards**: Total Meals, Total Calories, Avg per Meal
 - **HH:MM time format** (seconds stripped from timestamps)
+
+### AI Assistant
+- **AI-powered conversational assistant (Groq API, Llama 3.1)** — dual-mode chatbot integrated into the Gradio UI
+- **Dual-mode chatbot: application help + personalized nutrition advisor** — keyword-based intent classification routes questions to the appropriate mode
+- **Meal history analysis with daily/weekly summaries and recommendations** — reads last 7 days from `meal_log.csv` to provide data-driven insights
+- **Legal disclaimer for nutrition advice liability protection** — automatically appended to all nutrition-related responses
 
 ### Settings
 - USDA API key management (save, test connection)
@@ -273,6 +279,59 @@ Edited values (including corrected food names) override AI estimates in the CSV 
 
 ---
 
+## AI Assistant
+
+NutriSnap AI includes a conversational chatbot (Tab 6) powered by the **Groq API** (free tier) using the **Llama 3.3 70B** model. It operates in two modes and automatically classifies user intent via keyword detection.
+
+### Overview
+
+The AI Assistant is a dual-mode chatbot:
+- **App Knowledge mode** — answers questions about NutriSnap AI features, configuration, troubleshooting, and how the pipeline works
+- **Nutrition Advisor mode** — analyzes your logged meal history to provide personalized dietary insights, patterns, and recommendations
+
+### Setup
+
+1. Get a free Groq API key at [console.groq.com](https://console.groq.com/keys)
+2. Enter the key in the **Settings** tab (Gradio UI) — it is saved to `nutri_config.json`
+3. Alternatively, set the environment variable before launching:
+
+```bash
+export NUTRISNAP_GROQ_KEY="gsk_your_key_here"
+python app.py
+```
+
+### Modes
+
+The chatbot classifies each message into one of three intents:
+
+| Mode | Trigger | Behavior |
+|---|---|---|
+| `app_help` | Keywords: app, feature, config, setting, install, tab, model, error, export, etc. | Answers from built-in NutriSnap AI knowledge base |
+| `nutrition` | Keywords: calorie, protein, carb, meal, diet, weight, eat, daily, breakfast, etc. | Reads meal history and provides personalized nutrition insights |
+| `general` | Fallback when neither mode scores high enough | Combines both capabilities, asks for clarification if needed |
+
+### Meal Analysis
+
+When in nutrition mode, the chatbot reads the **last 7 days** of entries from `meal_log.csv` and provides:
+- Daily average calories, protein, carbs, and fat
+- Most frequently logged foods
+- Today's totals vs. weekly averages
+- Actionable recommendations based on logged patterns (e.g., "your protein intake is low on weekdays")
+
+The meal summary is cached for 60 seconds to avoid repeated disk reads.
+
+### Legal Disclaimer
+
+The following disclaimer is automatically appended to every nutrition-related response:
+
+> ⚠️ **Disclaimer**: This AI assistant provides general nutritional information based on your logged meal data. It is NOT a substitute for professional medical or dietary advice. Always consult a qualified healthcare provider or registered dietitian for personalized nutrition guidance. NutriSnapAI and its developers assume no liability for dietary decisions made based on this chatbot's responses.
+
+### Rate Limits
+
+The Groq free tier allows **30 requests per minute**. If the limit is reached, the chatbot displays a rate-limit message and the user can retry after a brief wait. Conversation history is capped at the last 10 turns (20 messages) to stay within token limits.
+
+---
+
 ## Installation & Quick Start
 
 ### Prerequisites
@@ -345,6 +404,7 @@ The first run downloads YOLOv8 and HuggingFace model weights automatically (~200
 ```
 NutriSnapAI/
 ├── app.py                  # Main application — all logic in one file
+├── chatbot.py              # AI assistant module (Groq integration)
 ├── fallback_ui.html        # Standalone HTML/JS fallback interface
 ├── requirements.txt        # Python dependencies
 ├── README.md               # Documentation
@@ -439,6 +499,9 @@ Reference guide with Recommended Daily Intake (RDI) values, tracking best practi
 - **Export Data**: Download meal log as CSV or generate an HTML meal report for PDF printing
 - **Appearance**: Toggle dark mode (persisted across sessions)
 
+### Tab 6: AI Assistant
+Conversational chatbot with two modes — ask about app features/configuration/troubleshooting, or get personalized nutrition insights from your meal history. Powered by Groq API (free tier). The chatbot classifies your intent automatically: questions about the app are answered from the built-in knowledge base, while nutrition-related questions trigger analysis of your last 7 days of logged meals.
+
 ### Save / Edit / Delete Workflow
 1. Analyze a photo → review results
 2. Correct food names, edit quantities in the interactive table → Recalculate (optional)
@@ -459,6 +522,7 @@ Reference guide with Recommended Daily Intake (RDI) values, tracking best practi
 | `NUTRISNAP_ENSEMBLE_ENABLED` | `true` | Enable multi-model ensemble (`true`/`false`) |
 | `NUTRISNAP_COUNT_MODEL` | `yolo11n.pt` | YOLO model for item counting within crops |
 | `NUTRISNAP_COUNT_MODE` | `accurate` | Counting mode: `accurate` (3-signal median) or `fast` (Canny-only) |
+| `NUTRISNAP_GROQ_KEY` | *(none)* | Groq API key for AI Assistant chatbot |
 
 ### Configuration File: `nutri_config.json`
 
@@ -496,6 +560,7 @@ All dependencies are listed in `requirements.txt`:
 | `opencv-python-headless` | Image processing: watershed, morphological ops, contour analysis, bounding box drawing |
 | `requests>=2.28.0` | HTTP client for USDA API and Open Food Facts API calls |
 | `numpy` | Numerical array operations for image processing |
+| `groq>=0.4.0` | Groq API SDK for AI chatbot |
 
 ---
 
@@ -541,6 +606,12 @@ All dependencies are listed in `requirements.txt`:
 21. **Dashboard shows no data** — Save at least one meal via the "Save Meal" button first; data persists in `meal_log.csv`
 22. **CSV export is empty** — Log at least one meal before exporting
 
+### AI Assistant
+
+23. **Chatbot not responding** — Check that your Groq API key is entered in the Settings tab; verify the key is valid at [console.groq.com](https://console.groq.com/keys)
+24. **Rate limit error** — The Groq free tier allows 30 requests/minute; wait a moment and retry
+25. **`groq` not installed** — Run `pip install groq>=0.4.0` and restart the application
+
 ---
 
 ## Architecture (Code Organization)
@@ -562,9 +633,10 @@ All dependencies are listed in `requirements.txt`:
 | **CSV Logging** | `ensure_csv()`, `log_meal()`, `read_log()`, `delete_log_entry()`, `clear_all_log()` |
 | **Analysis Pipeline** | `analyze_image()` — 6-stage pipeline with ensemble, counting, nutrition, deduplication |
 | **Dashboard** | `build_dashboard()` — 4 Plotly charts + 3 HTML summary cards |
-| **Gradio UI** | CSS, tips, `generate_meal_report()`, `build_ui()` — all 5 tabs and event handlers |
+| **Gradio UI** | CSS, tips, `generate_meal_report()`, `build_ui()` — all 6 tabs and event handlers |
 | **Fallback HTTP Server** | `start_fallback_server()` — lightweight REST API + HTML UI server on port 7860 |
 | **Main Entry Point** | Model loading, `--fallback` flag check, Gradio launch with auto-fallback |
+| **AI Assistant (`chatbot.py`)** | `classify_intent()`, `summarize_meal_log()`, `build_system_prompt()`, `chat()`, `_call_groq()` — dual-mode chatbot with Groq API |
 
 ---
 

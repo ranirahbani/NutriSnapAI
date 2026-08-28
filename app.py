@@ -27,6 +27,13 @@ from PIL import Image
 import gradio as gr
 import requests
 
+try:
+    import chatbot as chatbot_module
+    CHATBOT_AVAILABLE = True
+except ImportError:
+    CHATBOT_AVAILABLE = False
+    chatbot_module = None
+
 warnings.filterwarnings("ignore")
 
 # ============================================
@@ -2360,6 +2367,45 @@ def build_ui():
                     )
                     dark_mode_status = gr.Markdown("")
 
+                # Groq AI Assistant API key
+                with gr.Group():
+                    gr.Markdown("### 🤖 AI Assistant (Groq API)")
+                    gr.Markdown("Get a free API key at [console.groq.com](https://console.groq.com/keys)")
+                    with gr.Row():
+                        groq_key_input = gr.Textbox(
+                            label="Groq API Key",
+                            type="password",
+                            value=config.get("groq_api_key", ""),
+                            placeholder="Enter your Groq API key..."
+                        )
+                    with gr.Row():
+                        save_groq_btn = gr.Button("💾 Save Groq Key")
+                    groq_status = gr.Markdown("")
+
+            # ---- Tab 6: AI Assistant ----
+            with gr.TabItem("🤖 AI Assistant"):
+                gr.Markdown("### 🤖 NutriSnap AI Assistant")
+                gr.Markdown("Ask me about the app's features, your nutrition history, or get dietary insights!")
+                if CHATBOT_AVAILABLE:
+                    gr.Markdown(chatbot_module.DISCLAIMER_BANNER)
+                else:
+                    gr.Markdown("⚠️ Chatbot module not available. Ensure `chatbot.py` is in the app directory.")
+                
+                chatbot_display = gr.Chatbot(
+                    label="Chat",
+                    height=400,
+                    type="messages",
+                )
+                with gr.Row():
+                    chat_input = gr.Textbox(
+                        placeholder="Ask about your meals, nutrition goals, or app features...",
+                        label="Your message",
+                        scale=4,
+                        show_label=False,
+                    )
+                    chat_send_btn = gr.Button("Send", variant="primary", scale=1)
+                chat_clear_btn = gr.Button("🗑️ Clear Chat", variant="secondary", size="sm")
+
         # ---- Event Handlers ----
         def on_analyze(file):
             global _last_analysis_results
@@ -2455,6 +2501,35 @@ def build_ui():
             if enabled:
                 return "🌙 Dark mode enabled."
             return "☀️ Light mode enabled."
+
+        def on_save_groq_key(key):
+            config = load_config()
+            config["groq_api_key"] = key.strip()
+            save_config(config)
+            if key.strip():
+                return "✅ Groq API key saved!"
+            return "⚠️ Key cleared."
+
+        def on_chat_send(message, history):
+            if not message or not message.strip():
+                return history or [], ""
+            if not CHATBOT_AVAILABLE:
+                history = history or []
+                history.append({"role": "user", "content": message})
+                history.append({"role": "assistant", "content": "⚠️ Chatbot module not available."})
+                return history, ""
+            config = load_config()
+            api_key = config.get("groq_api_key", "") or os.environ.get("NUTRISNAP_GROQ_KEY", "")
+            if not api_key:
+                history = history or []
+                history.append({"role": "user", "content": message})
+                history.append({"role": "assistant", "content": "⚠️ Please configure your Groq API key in the **Settings** tab (under AI Assistant) or set the `NUTRISNAP_GROQ_KEY` environment variable.\n\nGet a free key at [console.groq.com](https://console.groq.com/keys)"})
+                return history, ""
+            history = history or []
+            response = chatbot_module.chat(message, history, api_key, CSV_FILE)
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": response})
+            return history, ""
 
         def on_refresh_dashboard():
             return build_dashboard()
@@ -2596,6 +2671,10 @@ def build_ui():
             outputs=[dark_mode_status],
             js="(function(val) { if (val) { document.body.classList.add('dark-mode'); } else { document.body.classList.remove('dark-mode'); } })"
         )
+        save_groq_btn.click(fn=on_save_groq_key, inputs=[groq_key_input], outputs=[groq_status])
+        chat_send_btn.click(fn=on_chat_send, inputs=[chat_input, chatbot_display], outputs=[chatbot_display, chat_input])
+        chat_input.submit(fn=on_chat_send, inputs=[chat_input, chatbot_display], outputs=[chatbot_display, chat_input])
+        chat_clear_btn.click(fn=lambda: ([], ""), outputs=[chatbot_display, chat_input])
 
         # Load data on startup
         demo.load(fn=on_refresh_dashboard,
@@ -2725,6 +2804,8 @@ def start_fallback_server(port=7860):
                 self._handle_clear_cache()
             elif path == "/api/log/save":
                 self._handle_log_save()
+            elif path == "/api/chat":
+                self._handle_chat()
             else:
                 self._error("Not found", 404)
 
@@ -2991,6 +3072,28 @@ def start_fallback_server(port=7860):
                 self.wfile.write(content)
             except Exception as e:
                 self._error(str(e), 500)
+
+        def _handle_chat(self):
+            """Handle AI chatbot requests."""
+            try:
+                data = self._read_json_body()
+                message = data.get("message", "")
+                history = data.get("history", [])
+                
+                if not CHATBOT_AVAILABLE:
+                    self._json_response({"reply": "⚠️ Chatbot module not available."})
+                    return
+                
+                config = load_config()
+                api_key = config.get("groq_api_key", "") or os.environ.get("NUTRISNAP_GROQ_KEY", "")
+                if not api_key:
+                    self._json_response({"reply": "⚠️ Please configure your Groq API key in Settings."})
+                    return
+                
+                reply = chatbot_module.chat(message, history, api_key, CSV_FILE)
+                self._json_response({"reply": reply})
+            except Exception as e:
+                self._json_response({"reply": f"⚠️ Error: {e}"})
 
     # ── Launch server ──
     print(f"\n{'='*50}")

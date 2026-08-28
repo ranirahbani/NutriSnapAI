@@ -308,6 +308,7 @@ tr:hover { background: rgba(44,122,74,0.09); }
   <button data-tab="log">📋 Food Log</button>
   <button data-tab="tips">💡 Nutrition Tips</button>
   <button data-tab="settings">⚙️ Settings</button>
+  <button data-tab="assistant">🤖 AI Assistant</button>
 </nav>
 
 <main class="container">
@@ -465,6 +466,22 @@ tr:hover { background: rgba(44,122,74,0.09); }
         <label class="toggle"><input type="checkbox" id="darkToggle"><span class="slider"></span></label>
         <span style="font-size:0.92em;">Dark Mode</span>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- AI Assistant Tab -->
+<section class="tab-panel" id="tab-assistant">
+  <div class="card" style="max-width:800px;margin:0 auto;">
+    <h3 style="color:var(--primary);margin-bottom:8px;">🤖 NutriSnap AI Assistant</h3>
+    <p style="font-size:0.85em;color:var(--text-secondary);margin-bottom:12px;">Ask about the app's features, your nutrition history, or get dietary insights!</p>
+    <div style="background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.3);border-radius:8px;padding:10px;margin-bottom:16px;font-size:0.8em;color:#856404;">
+      ⚠️ <strong>Disclaimer:</strong> This AI provides general nutritional information based on your logged data. It is NOT a substitute for professional medical or dietary advice. Consult a healthcare provider for personalized guidance.
+    </div>
+    <div id="chatMessages" style="height:350px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;background:var(--bg-card);display:flex;flex-direction:column;gap:8px;"></div>
+    <div style="display:flex;gap:8px;">
+      <input type="text" id="chatInput" placeholder="Ask about your meals or app features..." style="flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:0.9em;" onkeypress="if(event.key==='Enter')sendChatMessage()">
+      <button onclick="sendChatMessage()" style="background:var(--primary);color:white;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-weight:600;">Send</button>
     </div>
   </div>
 </section>
@@ -976,6 +993,65 @@ document.getElementById('exportCsvBtn').addEventListener('click', () => {
 
 // ── Init ──
 loadSettings();
+
+// ── AI Assistant Chat ──
+let chatHistory = [];
+
+async function sendChatMessage() {
+  const input = document.getElementById('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  
+  input.value = '';
+  appendChatBubble(msg, 'user');
+  chatHistory.push({role: 'user', content: msg});
+  
+  // Show typing indicator
+  const typingId = appendChatBubble('Thinking...', 'assistant', true);
+  
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, history: chatHistory})
+    });
+    const data = await res.json();
+    
+    // Remove typing indicator
+    const typingEl = document.getElementById(typingId);
+    if (typingEl) typingEl.remove();
+    
+    const reply = data.reply || 'No response received.';
+    appendChatBubble(reply, 'assistant');
+    chatHistory.push({role: 'assistant', content: reply});
+    
+    // Keep history manageable (last 20 messages)
+    if (chatHistory.length > 20) chatHistory = chatHistory.slice(-20);
+  } catch(e) {
+    const typingEl = document.getElementById(typingId);
+    if (typingEl) typingEl.remove();
+    appendChatBubble('⚠️ Failed to reach AI assistant. Check your connection.', 'assistant');
+  }
+}
+
+function appendChatBubble(text, role, isTyping) {
+  const container = document.getElementById('chatMessages');
+  const bubble = document.createElement('div');
+  const id = 'chat-' + Date.now() + '-' + Math.random().toString(36).substr(2,5);
+  bubble.id = id;
+  bubble.style.cssText = `
+    max-width:80%;padding:10px 14px;border-radius:12px;font-size:0.9em;line-height:1.4;
+    white-space:pre-wrap;word-wrap:break-word;
+    ${role === 'user' 
+      ? 'align-self:flex-end;background:var(--primary);color:white;border-bottom-right-radius:4px;' 
+      : 'align-self:flex-start;background:var(--bg-main,#f0f0f0);color:var(--text-primary);border-bottom-left-radius:4px;border:1px solid var(--border);'}
+    ${isTyping ? 'opacity:0.6;font-style:italic;' : ''}
+  `;
+  bubble.textContent = text;
+  container.appendChild(bubble);
+  container.scrollTop = container.scrollHeight;
+  return id;
+}
 </script>
 </body>
 </html>
