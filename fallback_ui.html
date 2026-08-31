@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NutriSnap AI</title>
+<title>PlateGenie AI</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root {
@@ -298,7 +298,7 @@ tr:hover { background: rgba(44,122,74,0.09); }
 <div class="toast-container" id="toasts"></div>
 
 <header class="header">
-  <h1>🍔 NutriSnap AI</h1>
+  <h1>🍔 PlateGenie AI</h1>
   <p>Snap. Identify. Track. Eat Better.</p>
 </header>
 
@@ -473,7 +473,7 @@ tr:hover { background: rgba(44,122,74,0.09); }
 <!-- AI Assistant Tab -->
 <section class="tab-panel" id="tab-assistant">
   <div class="card" style="max-width:800px;margin:0 auto;">
-    <h3 style="color:var(--primary);margin-bottom:8px;">🤖 NutriSnap AI Assistant</h3>
+    <h3 style="color:var(--primary);margin-bottom:8px;">🤖 PlateGenie AI Assistant</h3>
     <p style="font-size:0.85em;color:var(--text-secondary);margin-bottom:12px;">Ask about the app's features, your nutrition history, or get dietary insights!</p>
     <div style="background:rgba(255,165,0,0.08);border:1px solid rgba(255,165,0,0.3);border-radius:8px;padding:10px;margin-bottom:16px;font-size:0.8em;color:#856404;">
       ⚠️ <strong>Disclaimer:</strong> This AI provides general nutritional information based on your logged data. It is NOT a substitute for professional medical or dietary advice. Consult a healthcare provider for personalized guidance.
@@ -489,7 +489,7 @@ tr:hover { background: rgba(44,122,74,0.09); }
 
 <script>
 /* ══════════════════════════════════════════
-   NUTRISNAP AI — FALLBACK UI JAVASCRIPT
+   PLATEGENIE AI — FALLBACK UI JAVASCRIPT
    ══════════════════════════════════════════ */
 
 const API = '';  // same origin
@@ -534,10 +534,10 @@ function applyDark(on) {
   document.documentElement.setAttribute('data-theme', on ? 'dark' : 'light');
   darkToggle.checked = on;
 }
-applyDark(localStorage.getItem('nutrisnap_dark') === 'true');
+applyDark(localStorage.getItem('plategenie_dark') === 'true');
 darkToggle.addEventListener('change', () => {
   const on = darkToggle.checked;
-  localStorage.setItem('nutrisnap_dark', on);
+  localStorage.setItem('plategenie_dark', on);
   api('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ dark_mode: on }) });
 });

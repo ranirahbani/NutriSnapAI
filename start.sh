@@ -1,6 +1,6 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────────────────────────────────
-# NutriSnap AI — Startup Script
+# PlateGenie AI — Startup Script
 # ─────────────────────────────────────────────────────────────────────────────
 # First time? Make this script executable:
 #   chmod +x start.sh
@@ -34,7 +34,7 @@ clear
 echo ""
 echo -e "  ${GREEN_BOLD}╔═══════════════════════════════════════════════════════════╗${RESET}"
 echo -e "  ${GREEN_BOLD}║                                                           ║${RESET}"
-echo -e "  ${GREEN_BOLD}║${RESET}   ${BOLD}${WHITE}🍔  NutriSnap AI${RESET}                                   ${GREEN_BOLD}║${RESET}"
+echo -e "  ${GREEN_BOLD}║${RESET}   ${BOLD}${WHITE}🍔  PlateGenie AI${RESET}                                   ${GREEN_BOLD}║${RESET}"
 echo -e "  ${GREEN_BOLD}║${RESET}   ${FAINT}${ACCENT}Snap a photo. Know your nutrition.${RESET}               ${GREEN_BOLD}║${RESET}"
 echo -e "  ${GREEN_BOLD}║                                                           ║${RESET}"
 echo -e "  ${GREEN_BOLD}╚═══════════════════════════════════════════════════════════╝${RESET}"
@@ -144,14 +144,14 @@ done < requirements.txt
 
 # ── Optional: Model Configuration ────────────────────────────────────────────
 # Uncomment to use a different YOLO model (default: yolov8s.pt)
-# export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
+# export PLATEGENIE_YOLO_MODEL="yolov8m.pt"
 # Uncomment to adjust detection confidence (default: 0.20)
-# export NUTRISNAP_YOLO_CONF="0.25"
+# export PLATEGENIE_YOLO_CONF="0.25"
 
 # ── Step 6 — Launch the app ──────────────────────────────────────────────────
 echo ""
 echo -e "  ${GREEN_BOLD}───────────────────────────────────────────────────────────────${RESET}"
-echo -e "  ${GREEN_BOLD}  🌐  Launching NutriSnap AI…${RESET}"
+echo -e "  ${GREEN_BOLD}  🌐  Launching PlateGenie AI…${RESET}"
 echo -e "  ${GREEN_BOLD}───────────────────────────────────────────────────────────────${RESET}"
 echo ""
 

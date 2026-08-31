@@ -1,6 +1,6 @@
 @echo off
 REM ─────────────────────────────────────────────────────────────────────────────
-REM NutriSnap AI — Startup Script (Windows)
+REM PlateGenie AI — Startup Script (Windows)
 REM ─────────────────────────────────────────────────────────────────────────────
 REM Usage:
 REM   start.bat              Normal mode (Gradio)
@@ -25,7 +25,7 @@ cls
 echo.
 echo   %GREEN_BOLD%+-----------------------------------------------------------+%RESET%
 echo   %GREEN_BOLD%^|                                                           ^|%RESET%
-echo   %GREEN_BOLD%^|%RESET%   %BOLD%%WHITE%NutriSnap AI%RESET%                                       %GREEN_BOLD%^|%RESET%
+echo   %GREEN_BOLD%^|%RESET%   %BOLD%%WHITE%PlateGenie AI%RESET%                                       %GREEN_BOLD%^|%RESET%
 echo   %GREEN_BOLD%^|%RESET%   %FAINT%%ACCENT%Snap a photo. Know your nutrition.%RESET%                 %GREEN_BOLD%^|%RESET%
 echo   %GREEN_BOLD%^|                                                           ^|%RESET%
 echo   %GREEN_BOLD%+-----------------------------------------------------------+%RESET%
@@ -130,14 +130,14 @@ pip list --format=columns 2>nul | findstr /V "^Package " | findstr /V "^---" | f
 
 REM ── Optional: Model Configuration ─────────────────────────────────────────
 REM Uncomment to use a different YOLO model (default: yolov8s.pt)
-REM set NUTRISNAP_YOLO_MODEL=yolov8m.pt
+REM set PLATEGENIE_YOLO_MODEL=yolov8m.pt
 REM Uncomment to adjust detection confidence (default: 0.20)
-REM set NUTRISNAP_YOLO_CONF=0.25
+REM set PLATEGENIE_YOLO_CONF=0.25
 
 REM ── Step 6 — Launch the app ────────────────────────────────────────────────
 echo.
 echo   %GREEN_BOLD%---------------------------------------------------------------%RESET%
-echo   %GREEN_BOLD%  Launching NutriSnap AI...%RESET%
+echo   %GREEN_BOLD%  Launching PlateGenie AI...%RESET%
 echo   %GREEN_BOLD%---------------------------------------------------------------%RESET%
 echo.
 

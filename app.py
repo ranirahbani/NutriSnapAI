@@ -1,6 +1,8 @@
 """
-NutriSnap AI - Single-file food tracking application.
-Uses YOLOv8 for detection, HuggingFace classifier as second-stage refinement,
+PlateGenie AI - Single-file food tracking application.
+Snap a photo of your meal and instantly unlock calories, macros, and personalized
+nutrition insights—your AI-powered guide to smarter, healthier eating.
+Uses YOLOv8 for detection, HuggingFace classifier ensemble for refinement,
 Gradio for UI, Plotly/Matplotlib for dashboard charts.
 USDA & Open Food Facts APIs for nutrition data with local fallback.
 Run: python app.py
@@ -43,17 +45,17 @@ warnings.filterwarnings("ignore")
 CSV_FILE = "meal_log.csv"
 CSV_COLUMNS = ["Date", "Time", "Food", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Portion", "Confirmed"]
 CACHE_FILE = "nutrition_cache.json"
-CONFIG_FILE = "nutri_config.json"
+CONFIG_FILE = "plategenie_config.json"
 CACHE_EXPIRY_DAYS = 7
 
 # YOLO model configuration (override via environment variables)
-YOLO_MODEL = os.environ.get("NUTRISNAP_YOLO_MODEL", "yolov8m.pt")
-YOLO_CONF_THRESHOLD = float(os.environ.get("NUTRISNAP_YOLO_CONF", "0.20"))
-ENSEMBLE_ENABLED = os.environ.get("NUTRISNAP_ENSEMBLE_ENABLED", "true").lower() == "true"
-COUNT_MODE = os.environ.get("NUTRISNAP_COUNT_MODE", "accurate")  # "accurate" (watershed) or "fast" (canny-only)
+YOLO_MODEL = os.environ.get("PLATEGENIE_YOLO_MODEL", "yolov8m.pt")
+YOLO_CONF_THRESHOLD = float(os.environ.get("PLATEGENIE_YOLO_CONF", "0.20"))
+ENSEMBLE_ENABLED = os.environ.get("PLATEGENIE_ENSEMBLE_ENABLED", "true").lower() == "true"
+COUNT_MODE = os.environ.get("PLATEGENIE_COUNT_MODE", "accurate")  # "accurate" (watershed) or "fast" (canny-only)
 
 # Counting model configuration
-COUNT_MODEL_NAME = os.environ.get("NUTRISNAP_COUNT_MODEL", "yolo11n.pt")
+COUNT_MODEL_NAME = os.environ.get("PLATEGENIE_COUNT_MODEL", "yolo11n.pt")
 
 # State: last analysis results for Save Meal button
 _last_analysis_results = None
@@ -554,7 +556,7 @@ def search_usda_food(query, api_key):
                 return nutrients
         return None
     except Exception as e:
-        print(f"[NutriSnap] USDA API error: {e}")
+        print(f"[PlateGenie] USDA API error: {e}")
         return None
 
 
@@ -583,7 +585,7 @@ def search_openfoodfacts(query):
             }
         return None
     except Exception as e:
-        print(f"[NutriSnap] Open Food Facts API error: {e}")
+        print(f"[PlateGenie] Open Food Facts API error: {e}")
         return None
 
 
@@ -608,7 +610,7 @@ def _save_cache(cache):
         with open(CACHE_FILE, "w") as f:
             json.dump(cache, f, indent=2)
     except Exception as e:
-        print(f"[NutriSnap] Cache save error: {e}")
+        print(f"[PlateGenie] Cache save error: {e}")
 
 
 def cache_nutrition(food_name, data):
@@ -675,7 +677,7 @@ def save_config(config):
             json.dump(config, f, indent=2)
         return True
     except Exception as e:
-        print(f"[NutriSnap] Config save error: {e}")
+        print(f"[PlateGenie] Config save error: {e}")
         return False
 
 
@@ -711,19 +713,19 @@ def load_yolo():
     try:
         from ultralytics import YOLO
         yolo_model = YOLO(YOLO_MODEL)
-        print(f"[NutriSnap] {YOLO_MODEL} loaded successfully")
+        print(f"[PlateGenie] {YOLO_MODEL} loaded successfully")
         return True
     except Exception as e:
         if YOLO_MODEL != "yolov8n.pt":
-            print(f"[NutriSnap] {YOLO_MODEL} failed ({e}), falling back to yolov8n.pt")
+            print(f"[PlateGenie] {YOLO_MODEL} failed ({e}), falling back to yolov8n.pt")
             try:
                 from ultralytics import YOLO
                 yolo_model = YOLO("yolov8n.pt")
-                print("[NutriSnap] yolov8n.pt loaded as fallback")
+                print("[PlateGenie] yolov8n.pt loaded as fallback")
                 return True
             except Exception:
                 pass
-        print(f"[NutriSnap] YOLO failed to load: {e}")
+        print(f"[PlateGenie] YOLO failed to load: {e}")
         return False
 
 
@@ -736,10 +738,10 @@ def load_count_model():
     try:
         from ultralytics import YOLO
         count_model = YOLO(COUNT_MODEL_NAME)
-        print(f"[NutriSnap] Counting model ({COUNT_MODEL_NAME}) loaded successfully")
+        print(f"[PlateGenie] Counting model ({COUNT_MODEL_NAME}) loaded successfully")
         return True
     except Exception as e:
-        print(f"[NutriSnap] Counting model failed to load: {e}")
+        print(f"[PlateGenie] Counting model failed to load: {e}")
         return False
 
 
@@ -752,10 +754,10 @@ def load_hf_classifier():
         hf_processor = AutoImageProcessor.from_pretrained(model_name)
         hf_classifier = AutoModelForImageClassification.from_pretrained(model_name)
         hf_classifier.eval()
-        print(f"[NutriSnap] HF classifier ({model_name}) loaded successfully")
+        print(f"[PlateGenie] HF classifier ({model_name}) loaded successfully")
         return True
     except Exception as e:
-        print(f"[NutriSnap] HF classifier failed to load: {e}")
+        print(f"[PlateGenie] HF classifier failed to load: {e}")
         return False
 
 
@@ -800,12 +802,12 @@ class EnsembleClassifier:
                 model = AutoModelForImageClassification.from_pretrained(cfg["name"])
                 model.eval()
                 self.models.append((processor, model, cfg["weight"], cfg["name"]))
-                print(f"[NutriSnap Ensemble] Loaded {cfg['name']} (weight={cfg['weight']})")
+                print(f"[PlateGenie Ensemble] Loaded {cfg['name']} (weight={cfg['weight']})")
             except Exception as e:
-                print(f"[NutriSnap Ensemble] Failed to load {cfg['name']}: {e}")
+                print(f"[PlateGenie Ensemble] Failed to load {cfg['name']}: {e}")
         self._loaded = True
         if not self.models:
-            print("[NutriSnap Ensemble] WARNING: No ensemble models loaded, will fall back to single model")
+            print("[PlateGenie Ensemble] WARNING: No ensemble models loaded, will fall back to single model")
 
     def classify(self, image_pil, top_k=3):
         """
@@ -841,7 +843,7 @@ class EnsembleClassifier:
                     label = model.config.id2label[idx].lower().replace("-", "_").replace(" ", "_")
                     all_predictions.append((label, score, weight))
             except Exception as e:
-                print(f"[NutriSnap Ensemble] Inference error with {name}: {e}")
+                print(f"[PlateGenie Ensemble] Inference error with {name}: {e}")
                 continue
 
         return self._fuse_predictions(all_predictions)
@@ -1150,7 +1152,7 @@ def count_with_model(food_name, bbox, image_bgr):
 
         return None  # No detections — fall back to OpenCV
     except Exception as e:
-        print(f"[NutriSnap] Count model error for {food_name}: {e}")
+        print(f"[PlateGenie] Count model error for {food_name}: {e}")
         return None
 
 
@@ -1504,7 +1506,7 @@ def detect_with_yolo(image_np):
                     })
         return detections
     except Exception as e:
-        print(f"[NutriSnap] YOLO detection error: {e}")
+        print(f"[PlateGenie] YOLO detection error: {e}")
         return []
 
 
@@ -1535,7 +1537,7 @@ def classify_with_hf(image_input, top_k=3):
             results.append({"label": label, "confidence": round(score, 4)})
         return results
     except Exception as e:
-        print(f"[NutriSnap] HF classification error: {e}")
+        print(f"[PlateGenie] HF classification error: {e}")
         return []
 
 
@@ -2096,7 +2098,7 @@ TIPS_MD = """
 
 HEADER_HTML = """
 <div class="header">
-    <h1>🍔 NutriSnap AI</h1>
+    <h1>🍔 PlateGenie AI</h1>
     <p>Snap. Identify. Track. Eat Better.</p>
 </div>
 """
@@ -2134,7 +2136,7 @@ def generate_meal_report(detections):
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>NutriSnap AI - Meal Report</title>
+<title>PlateGenie AI - Meal Report</title>
 <style>
   body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; color: #333; }}
   .report-header {{ background: linear-gradient(135deg, #2C7A4A, #1A5A3A); color: white; padding: 24px; border-radius: 12px; text-align: center; margin-bottom: 24px; }}
@@ -2152,7 +2154,7 @@ def generate_meal_report(detections):
 </head>
 <body>
 <div class="report-header">
-  <h1>NutriSnap AI - Meal Report</h1>
+  <h1>PlateGenie AI - Meal Report</h1>
   <p>Generated on {now.strftime("%Y-%m-%d %H:%M:%S")}</p>
 </div>
 <h2>Detected Foods ({len(detections)} item(s))</h2>
@@ -2167,7 +2169,7 @@ def generate_meal_report(detections):
   <span>{round(total_carb, 1)}g carbs</span>
   <span>{round(total_fat, 1)}g fat</span>
 </div>
-<div class="footer">Generated by NutriSnap AI</div>
+<div class="footer">Generated by PlateGenie AI</div>
 </body>
 </html>"""
     report_path = "meal_report.html"
@@ -2211,7 +2213,7 @@ def build_ui():
 
     full_css = CSS
 
-    with gr.Blocks(css=full_css, title="NutriSnap AI", theme=gr.themes.Soft(), head=JS_HEAD) as demo:
+    with gr.Blocks(css=full_css, title="PlateGenie AI", theme=gr.themes.Soft(), head=JS_HEAD) as demo:
         analysis_state = gr.State(value=None)
 
         # Header
@@ -2384,7 +2386,7 @@ def build_ui():
 
             # ---- Tab 6: AI Assistant ----
             with gr.TabItem("🤖 AI Assistant"):
-                gr.Markdown("### 🤖 NutriSnap AI Assistant")
+                gr.Markdown("### 🤖 PlateGenie AI Assistant")
                 gr.Markdown("Ask me about the app's features, your nutrition history, or get dietary insights!")
                 if CHATBOT_AVAILABLE:
                     gr.Markdown(chatbot_module.DISCLAIMER_BANNER)
@@ -2517,10 +2519,10 @@ def build_ui():
                 history.append((message, "⚠️ Chatbot module not available."))
                 return history, ""
             config = load_config()
-            api_key = config.get("groq_api_key", "") or os.environ.get("NUTRISNAP_GROQ_KEY", "")
+            api_key = config.get("groq_api_key", "") or os.environ.get("PLATEGENIE_GROQ_KEY", "")
             if not api_key:
                 history = history or []
-                history.append((message, "⚠️ Please configure your Groq API key in the **Settings** tab (under AI Assistant) or set the `NUTRISNAP_GROQ_KEY` environment variable.\n\nGet a free key at [console.groq.com](https://console.groq.com/keys)"))
+                history.append((message, "⚠️ Please configure your Groq API key in the **Settings** tab (under AI Assistant) or set the `PLATEGENIE_GROQ_KEY` environment variable.\n\nGet a free key at [console.groq.com](https://console.groq.com/keys)"))
                 return history, ""
             history = history or []
             # Convert tuple history to messages format for chatbot module
@@ -3086,7 +3088,7 @@ def start_fallback_server(port=7860):
                     return
                 
                 config = load_config()
-                api_key = config.get("groq_api_key", "") or os.environ.get("NUTRISNAP_GROQ_KEY", "")
+                api_key = config.get("groq_api_key", "") or os.environ.get("PLATEGENIE_GROQ_KEY", "")
                 if not api_key:
                     self._json_response({"reply": "⚠️ Please configure your Groq API key in Settings."})
                     return
@@ -3115,18 +3117,18 @@ def start_fallback_server(port=7860):
 if __name__ == "__main__":
     import sys as _sys
 
-    print("[NutriSnap] Loading models...")
+    print("[PlateGenie] Loading models...")
     load_yolo()
     load_hf_classifier()
     load_count_model()
 
     if "--fallback" in _sys.argv:
-        print("[NutriSnap] --fallback flag detected. Starting HTML interface...")
+        print("[PlateGenie] --fallback flag detected. Starting HTML interface...")
         start_fallback_server()
     else:
         try:
             import gradio as gr  # noqa: F811
-            print("[NutriSnap] Starting Gradio app...")
+            print("[PlateGenie] Starting Gradio app...")
             demo = build_ui()
             demo.launch(share=True)
         except (ImportError, Exception) as e:

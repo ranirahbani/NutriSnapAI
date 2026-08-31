@@ -1,5 +1,5 @@
 """
-NutriSnapAI Conversational AI Assistant
+PlateGenieAI Conversational AI Assistant
 Dual-mode chatbot: Application Knowledge + Personal Nutrition Advisor
 Uses Groq API (free tier) with Llama 3.1 model.
 """
@@ -18,7 +18,7 @@ DISCLAIMER = (
     "\n\n---\n⚠️ *Disclaimer: This AI assistant provides general nutritional information "
     "based on your logged meal data. It is NOT a substitute for professional medical or "
     "dietary advice. Always consult a qualified healthcare provider or registered dietitian "
-    "for personalized nutrition guidance. NutriSnapAI and its developers assume no liability "
+    "for personalized nutrition guidance. PlateGenieAI and its developers assume no liability "
     "for dietary decisions made based on this chatbot's responses.*"
 )
 
@@ -26,7 +26,7 @@ DISCLAIMER_BANNER = (
     "⚠️ **Disclaimer**: This AI assistant provides general nutritional information based on "
     "your logged meal data. It is NOT a substitute for professional medical or dietary advice. "
     "Always consult a qualified healthcare provider or registered dietitian for personalized "
-    "nutrition guidance. NutriSnapAI and its developers assume no liability for dietary "
+    "nutrition guidance. PlateGenieAI and its developers assume no liability for dietary "
     "decisions made based on this chatbot's responses."
 )
 
@@ -38,10 +38,10 @@ CSV_COLUMNS = ["Date", "Time", "Food", "Calories", "Protein (g)", "Carbs (g)", "
 
 # App knowledge context
 APP_KNOWLEDGE = """
-# NutriSnap AI - Application Knowledge Base
+# PlateGenie AI - Application Knowledge Base
 
-## What is NutriSnap AI?
-NutriSnap AI is a single-file food tracking application that uses AI to detect, classify, and track nutritional content from meal photos.
+## What is PlateGenie AI?
+PlateGenie AI is a single-file food tracking application that uses AI to detect, classify, and track nutritional content from meal photos.
 
 ## How It Works (Pipeline)
 1. **Upload** a meal photo
@@ -61,12 +61,12 @@ NutriSnap AI is a single-file food tracking application that uses AI to detect, 
 6. **AI Assistant** - This chatbot (app help + nutrition advice)
 
 ## Configuration (Environment Variables)
-- `NUTRISNAP_YOLO_MODEL` (default: yolov8m.pt) - Detection model
-- `NUTRISNAP_YOLO_CONF` (default: 0.20) - Detection confidence threshold
-- `NUTRISNAP_ENSEMBLE_ENABLED` (default: true) - Multi-model ensemble on/off
-- `NUTRISNAP_COUNT_MODE` (default: accurate) - Counting mode: "accurate" or "fast"
-- `NUTRISNAP_COUNT_MODEL` (default: yolo11n.pt) - Item counting model
-- `NUTRISNAP_GROQ_KEY` - Groq API key for AI Assistant
+- `PLATEGENIE_YOLO_MODEL` (default: yolov8m.pt) - Detection model
+- `PLATEGENIE_YOLO_CONF` (default: 0.20) - Detection confidence threshold
+- `PLATEGENIE_ENSEMBLE_ENABLED` (default: true) - Multi-model ensemble on/off
+- `PLATEGENIE_COUNT_MODE` (default: accurate) - Counting mode: "accurate" or "fast"
+- `PLATEGENIE_COUNT_MODEL` (default: yolo11n.pt) - Item counting model
+- `PLATEGENIE_GROQ_KEY` - Groq API key for AI Assistant
 
 ## Ensemble Models
 - yvelos/beit-food-384 (primary, weight 1.0)
@@ -75,8 +75,8 @@ NutriSnap AI is a single-file food tracking application that uses AI to detect, 
 
 ## Troubleshooting
 - **Models not downloading**: Check internet connection, firewall, disk space (~4GB needed)
-- **Out of memory**: Set NUTRISNAP_ENSEMBLE_ENABLED=false (saves ~4GB RAM)
-- **Slow analysis**: Set NUTRISNAP_COUNT_MODE=fast
+- **Out of memory**: Set PLATEGENIE_ENSEMBLE_ENABLED=false (saves ~4GB RAM)
+- **Slow analysis**: Set PLATEGENIE_COUNT_MODE=fast
 - **Wrong food detected**: Edit the food name in the results table and click Recalculate
 - **Groq API errors**: Check API key in Settings, verify at console.groq.com
 - **Dashboard empty**: Upload and save at least one meal first
@@ -85,7 +85,7 @@ NutriSnap AI is a single-file food tracking application that uses AI to detect, 
 ## Data Storage
 - Meals logged to `meal_log.csv` (Date, Time, Food, Calories, Protein, Carbs, Fat, Portion)
 - Nutrition cache in `nutrition_cache.json` (7-day expiry)
-- Settings in `nutri_config.json`
+- Settings in `plategenie_config.json`
 
 ## Running the App
 - `python app.py` (Gradio UI on port 7860)
@@ -253,7 +253,7 @@ def build_system_prompt(intent, meal_summary=""):
     
     if intent == "app_help":
         return (
-            "You are NutriSnap AI's built-in assistant. Answer questions about the application "
+            "You are PlateGenie AI's built-in assistant. Answer questions about the application "
             "using ONLY the following knowledge base. Be concise, friendly, and helpful. "
             "If the answer isn't in the knowledge base, say you don't know.\n\n"
             f"{APP_KNOWLEDGE}"
@@ -261,7 +261,7 @@ def build_system_prompt(intent, meal_summary=""):
     
     elif intent == "nutrition":
         return (
-            "You are a friendly nutrition advisor for NutriSnap AI. Analyze the user's meal "
+            "You are a friendly nutrition advisor for PlateGenie AI. Analyze the user's meal "
             "history data provided below to give personalized insights. Be specific about what "
             "the user actually ate — reference their logged foods by name. Provide actionable "
             "suggestions. Keep responses concise (2-3 paragraphs max). "
@@ -272,7 +272,7 @@ def build_system_prompt(intent, meal_summary=""):
     
     else:  # general
         return (
-            "You are NutriSnap AI's assistant. You can help with:\n"
+            "You are PlateGenie AI's assistant. You can help with:\n"
             "1. Questions about the app (features, settings, troubleshooting)\n"
             "2. Nutrition insights based on the user's logged meals\n\n"
             "Determine what the user needs and respond helpfully. If unclear, ask them to "

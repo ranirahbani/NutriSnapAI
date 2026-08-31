@@ -1,14 +1,14 @@
-# 🍔 NutriSnap AI
+# 🍔 PlateGenie AI
 
-**Snap. Identify. Track. Eat Better.**
+**Snap a photo of your meal and instantly unlock calories, macros, and personalized nutrition insights—your AI-powered guide to smarter, healthier eating.**
 
-NutriSnap AI is a single-file food tracking application that uses computer vision to automatically detect, classify, and estimate nutrition from meal photos. It combines YOLOv8 object detection with a multi-model HuggingFace ensemble classifier, YOLO11n-based item counting (with OpenCV fallback), and a multi-source nutrition lookup chain (USDA API → Open Food Facts → local database) to deliver accurate per-item calorie and macronutrient estimates.
+PlateGenie AI is a single-file food tracking application that uses computer vision to automatically detect, classify, and estimate nutrition from meal photos. It combines YOLOv8 object detection with a multi-model HuggingFace ensemble classifier, YOLO11n-based item counting (with OpenCV fallback), and a multi-source nutrition lookup chain (USDA API → Open Food Facts → local database) to deliver accurate per-item calorie and macronutrient estimates.
 
 ---
 
 ## Overview
 
-NutriSnap AI turns a meal photo into structured nutrition data in seconds:
+PlateGenie AI turns a meal photo into structured nutrition data in seconds:
 
 1. **Upload** a photo of your meal
 2. **Detect** food items using YOLOv8 object detection
@@ -131,7 +131,7 @@ NutriSnap AI turns a meal photo into structured nutrition data in seconds:
 ![Architecture Flow](docs/images/architecture_flow.png)
 
 ### Stage 1: YOLOv8 Detection (WHERE)
-YOLOv8 runs on the full image to locate food items. Only COCO food classes (banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake) are kept. Detections below `NUTRISNAP_YOLO_CONF` are discarded.
+YOLOv8 runs on the full image to locate food items. Only COCO food classes (banana, apple, sandwich, orange, broccoli, carrot, hot dog, pizza, donut, cake) are kept. Detections below `PLATEGENIE_YOLO_CONF` are discarded.
 
 ### Stage 2: Multi-Model Ensemble Classification (WHAT)
 Each YOLO bounding box is cropped and passed to 3 HuggingFace models in parallel:
@@ -153,7 +153,7 @@ Skipped when ≥2 YOLO detections have confidence >0.6 (indicating YOLO already 
 If no detections exist after all 3 stages, the full image is classified as a last resort.
 
 ### Stage 4: Advanced Counting (HOW MANY)
-NutriSnap uses **YOLO11n** as the primary counting model — it counts detected objects within each food crop and the result overrides the heuristic entirely. If the counting model fails, the system falls back to an improved OpenCV approach with 3 independent signals:
+PlateGenie uses **YOLO11n** as the primary counting model — it counts detected objects within each food crop and the result overrides the heuristic entirely. If the counting model fails, the system falls back to an improved OpenCV approach with 3 independent signals:
 
 1. **Canny edge contours** — Gaussian blur → Canny edge detection → external contour counting (filtered by minimum area)
 2. **Watershed segmentation** — Otsu threshold → morphological opening → distance transform → connected components as markers → component count
@@ -189,31 +189,31 @@ After analysis, an editable table displays each detected item with Food name, Qu
 
 | Variable | Default | Description |
 |---|---|---|
-| `NUTRISNAP_YOLO_MODEL` | `yolov8m.pt` | YOLO detection model file |
-| `NUTRISNAP_YOLO_CONF` | `0.20` | Detection confidence threshold |
-| `NUTRISNAP_ENSEMBLE_ENABLED` | `true` | Enable/disable multi-model ensemble |
-| `NUTRISNAP_COUNT_MODEL` | `yolo11n.pt` | YOLO model for item counting within crops |
-| `NUTRISNAP_COUNT_MODE` | `accurate` | Counting mode: `accurate` (watershed + morphological + contour) or `fast` (Canny-only) |
+| `PLATEGENIE_YOLO_MODEL` | `yolov8m.pt` | YOLO detection model file |
+| `PLATEGENIE_YOLO_CONF` | `0.20` | Detection confidence threshold |
+| `PLATEGENIE_ENSEMBLE_ENABLED` | `true` | Enable/disable multi-model ensemble |
+| `PLATEGENIE_COUNT_MODEL` | `yolo11n.pt` | YOLO model for item counting within crops |
+| `PLATEGENIE_COUNT_MODE` | `accurate` | Counting mode: `accurate` (watershed + morphological + contour) or `fast` (Canny-only) |
 
 Set them before launching:
 
 ```bash
 # macOS / Linux
-export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
-export NUTRISNAP_YOLO_CONF="0.25"
-export NUTRISNAP_ENSEMBLE_ENABLED="true"
-export NUTRISNAP_COUNT_MODEL="yolo11n.pt"
-export NUTRISNAP_COUNT_MODE="accurate"
+export PLATEGENIE_YOLO_MODEL="yolov8m.pt"
+export PLATEGENIE_YOLO_CONF="0.25"
+export PLATEGENIE_ENSEMBLE_ENABLED="true"
+export PLATEGENIE_COUNT_MODEL="yolo11n.pt"
+export PLATEGENIE_COUNT_MODE="accurate"
 ./start.sh
 ```
 
 ```bat
 REM Windows
-set NUTRISNAP_YOLO_MODEL=yolov8m.pt
-set NUTRISNAP_YOLO_CONF=0.25
-set NUTRISNAP_ENSEMBLE_ENABLED=true
-set NUTRISNAP_COUNT_MODEL=yolo11n.pt
-set NUTRISNAP_COUNT_MODE=accurate
+set PLATEGENIE_YOLO_MODEL=yolov8m.pt
+set PLATEGENIE_YOLO_CONF=0.25
+set PLATEGENIE_ENSEMBLE_ENABLED=true
+set PLATEGENIE_COUNT_MODEL=yolo11n.pt
+set PLATEGENIE_COUNT_MODE=accurate
 start.bat
 ```
 
@@ -241,9 +241,9 @@ All 3 models run in parallel on each YOLO crop. Predictions are resolved through
 
 ## Counting Approach
 
-NutriSnap uses **YOLO11n** as the primary counting model to count detected objects within each food crop. The model is configured via the `NUTRISNAP_COUNT_MODEL` environment variable (defaults to `yolo11n.pt`). The counting model result **overrides the heuristic entirely** when successful.
+PlateGenie uses **YOLO11n** as the primary counting model to count detected objects within each food crop. The model is configured via the `PLATEGENIE_COUNT_MODEL` environment variable (defaults to `yolo11n.pt`). The counting model result **overrides the heuristic entirely** when successful.
 
-When the counting model fails (e.g., load error or inference failure), NutriSnap falls back to an improved OpenCV approach that combines 3 independent counting signals:
+When the counting model fails (e.g., load error or inference failure), PlateGenie falls back to an improved OpenCV approach that combines 3 independent counting signals:
 
 | Signal | Technique | Strengths |
 |---|---|---|
@@ -257,7 +257,7 @@ When the counting model fails (e.g., load error or inference failure), NutriSnap
 - **Accurate mode** (default): 50% heuristic + 50% texture count — best overall accuracy
 - **Fast mode**: 60% heuristic + 40% texture (Canny only) — faster but less refined
 
-Set `NUTRISNAP_COUNT_MODE=fast` if analysis is too slow on your hardware.
+Set `PLATEGENIE_COUNT_MODE=fast` if analysis is too slow on your hardware.
 
 ---
 
@@ -281,22 +281,22 @@ Edited values (including corrected food names) override AI estimates in the CSV 
 
 ## AI Assistant
 
-NutriSnap AI includes a conversational chatbot (Tab 6) powered by the **Groq API** (free tier) using the **Llama 3.3 70B** model. It operates in two modes and automatically classifies user intent via keyword detection.
+PlateGenie AI includes a conversational chatbot (Tab 6) powered by the **Groq API** (free tier) using the **Llama 3.3 70B** model. It operates in two modes and automatically classifies user intent via keyword detection.
 
 ### Overview
 
 The AI Assistant is a dual-mode chatbot:
-- **App Knowledge mode** — answers questions about NutriSnap AI features, configuration, troubleshooting, and how the pipeline works
+- **App Knowledge mode** — answers questions about PlateGenie AI features, configuration, troubleshooting, and how the pipeline works
 - **Nutrition Advisor mode** — analyzes your logged meal history to provide personalized dietary insights, patterns, and recommendations
 
 ### Setup
 
 1. Get a free Groq API key at [console.groq.com](https://console.groq.com/keys)
-2. Enter the key in the **Settings** tab (Gradio UI) — it is saved to `nutri_config.json`
+2. Enter the key in the **Settings** tab (Gradio UI) — it is saved to `plategenie_config.json`
 3. Alternatively, set the environment variable before launching:
 
 ```bash
-export NUTRISNAP_GROQ_KEY="gsk_your_key_here"
+export PLATEGENIE_GROQ_KEY="gsk_your_key_here"
 python app.py
 ```
 
@@ -306,7 +306,7 @@ The chatbot classifies each message into one of three intents:
 
 | Mode | Trigger | Behavior |
 |---|---|---|
-| `app_help` | Keywords: app, feature, config, setting, install, tab, model, error, export, etc. | Answers from built-in NutriSnap AI knowledge base |
+| `app_help` | Keywords: app, feature, config, setting, install, tab, model, error, export, etc. | Answers from built-in PlateGenie AI knowledge base |
 | `nutrition` | Keywords: calorie, protein, carb, meal, diet, weight, eat, daily, breakfast, etc. | Reads meal history and provides personalized nutrition insights |
 | `general` | Fallback when neither mode scores high enough | Combines both capabilities, asks for clarification if needed |
 
@@ -324,7 +324,7 @@ The meal summary is cached for 60 seconds to avoid repeated disk reads.
 
 The following disclaimer is automatically appended to every nutrition-related response:
 
-> ⚠️ **Disclaimer**: This AI assistant provides general nutritional information based on your logged meal data. It is NOT a substitute for professional medical or dietary advice. Always consult a qualified healthcare provider or registered dietitian for personalized nutrition guidance. NutriSnapAI and its developers assume no liability for dietary decisions made based on this chatbot's responses.
+> ⚠️ **Disclaimer**: This AI assistant provides general nutritional information based on your logged meal data. It is NOT a substitute for professional medical or dietary advice. Always consult a qualified healthcare provider or registered dietitian for personalized nutrition guidance. PlateGenieAI and its developers assume no liability for dietary decisions made based on this chatbot's responses.
 
 ### Rate Limits
 
@@ -361,7 +361,7 @@ Both scripts automatically create a virtual environment, install all dependencie
 
 ```bash
 # Clone or download the project
-cd NutriSnapAI
+cd PlateGenieAI
 
 # Create virtual environment
 python3 -m venv venv
@@ -380,18 +380,18 @@ python app.py --fallback       # Fallback HTML UI
 
 ```bash
 # Use higher-accuracy YOLO model + ensemble
-export NUTRISNAP_YOLO_MODEL="yolov8m.pt"
-export NUTRISNAP_ENSEMBLE_ENABLED="true"
-export NUTRISNAP_COUNT_MODEL="yolo11n.pt"
-export NUTRISNAP_COUNT_MODE="accurate"
+export PLATEGENIE_YOLO_MODEL="yolov8m.pt"
+export PLATEGENIE_ENSEMBLE_ENABLED="true"
+export PLATEGENIE_COUNT_MODEL="yolo11n.pt"
+export PLATEGENIE_COUNT_MODE="accurate"
 python app.py
 ```
 
 ```bash
 # Low-resource mode (faster, less accurate)
-export NUTRISNAP_YOLO_MODEL="yolov8n.pt"
-export NUTRISNAP_ENSEMBLE_ENABLED="false"
-export NUTRISNAP_COUNT_MODE="fast"
+export PLATEGENIE_YOLO_MODEL="yolov8n.pt"
+export PLATEGENIE_ENSEMBLE_ENABLED="false"
+export PLATEGENIE_COUNT_MODE="fast"
 python app.py
 ```
 
@@ -402,7 +402,7 @@ The first run downloads YOLOv8 and HuggingFace model weights automatically (~200
 ## File Structure
 
 ```
-NutriSnapAI/
+PlateGenieAI/
 ├── app.py                  # Main application — all logic in one file
 ├── chatbot.py              # AI assistant module (Groq integration)
 ├── fallback_ui.html        # Standalone HTML/JS fallback interface
@@ -419,7 +419,7 @@ NutriSnapAI/
 ├── [auto-generated at runtime]
 │   ├── meal_log.csv            # Meal history (Date, Time, Food, Calories, Protein, Carbs, Fat, Portion, Confirmed)
 │   ├── nutrition_cache.json    # 7-day nutrition lookup cache
-│   ├── nutri_config.json       # App settings (USDA API key, dark mode)
+│   ├── plategenie_config.json       # App settings (USDA API key, dark mode)
 │   └── meal_report.html        # HTML meal report (generated via Export PDF)
 └── venv/                       # Virtual environment (created by start scripts)
 ```
@@ -517,14 +517,14 @@ Conversational chatbot with two modes — ask about app features/configuration/t
 
 | Variable | Default | Description |
 |---|---|---|
-| `NUTRISNAP_YOLO_MODEL` | `yolov8m.pt` | YOLO model file (`yolov8n.pt`, `yolov8s.pt`, `yolov8m.pt`) |
-| `NUTRISNAP_YOLO_CONF` | `0.20` | YOLO detection confidence threshold (0.0–1.0) |
-| `NUTRISNAP_ENSEMBLE_ENABLED` | `true` | Enable multi-model ensemble (`true`/`false`) |
-| `NUTRISNAP_COUNT_MODEL` | `yolo11n.pt` | YOLO model for item counting within crops |
-| `NUTRISNAP_COUNT_MODE` | `accurate` | Counting mode: `accurate` (3-signal median) or `fast` (Canny-only) |
-| `NUTRISNAP_GROQ_KEY` | *(none)* | Groq API key for AI Assistant chatbot |
+| `PLATEGENIE_YOLO_MODEL` | `yolov8m.pt` | YOLO model file (`yolov8n.pt`, `yolov8s.pt`, `yolov8m.pt`) |
+| `PLATEGENIE_YOLO_CONF` | `0.20` | YOLO detection confidence threshold (0.0–1.0) |
+| `PLATEGENIE_ENSEMBLE_ENABLED` | `true` | Enable multi-model ensemble (`true`/`false`) |
+| `PLATEGENIE_COUNT_MODEL` | `yolo11n.pt` | YOLO model for item counting within crops |
+| `PLATEGENIE_COUNT_MODE` | `accurate` | Counting mode: `accurate` (3-signal median) or `fast` (Canny-only) |
+| `PLATEGENIE_GROQ_KEY` | *(none)* | Groq API key for AI Assistant chatbot |
 
-### Configuration File: `nutri_config.json`
+### Configuration File: `plategenie_config.json`
 
 Auto-generated on first settings save. Structure:
 
@@ -538,7 +538,7 @@ Auto-generated on first settings save. Structure:
 ### USDA API Key
 Get a free key at [fdc.nal.usda.gov/api-key-signup](https://fdc.nal.usda.gov/api-key-signup.html).
 
-Enter the key in the **Settings** tab of either the Gradio UI or the fallback HTML interface. Keys are stored in `nutri_config.json`.
+Enter the key in the **Settings** tab of either the Gradio UI or the fallback HTML interface. Keys are stored in `plategenie_config.json`.
 
 ---
 
@@ -588,8 +588,8 @@ All dependencies are listed in `requirements.txt`:
 
 ### Performance & Resources
 
-12. **High RAM usage** — ~4–6 GB with full ensemble (3 models); switch to `NUTRISNAP_ENSEMBLE_ENABLED=false` for ~2 GB usage
-13. **Analysis is slow** — Set `NUTRISNAP_COUNT_MODE=fast` to skip watershed/morphological counting; or use `yolov8n.pt` for faster detection
+12. **High RAM usage** — ~4–6 GB with full ensemble (3 models); switch to `PLATEGENIE_ENSEMBLE_ENABLED=false` for ~2 GB usage
+13. **Analysis is slow** — Set `PLATEGENIE_COUNT_MODE=fast` to skip watershed/morphological counting; or use `yolov8n.pt` for faster detection
 14. **GPU availability** — runs on CPU by default; CUDA is auto-detected by PyTorch if available for faster inference
 
 ### Detection Issues
