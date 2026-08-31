@@ -2394,7 +2394,6 @@ def build_ui():
                 chatbot_display = gr.Chatbot(
                     label="Chat",
                     height=400,
-                    type="messages",
                 )
                 with gr.Row():
                     chat_input = gr.Textbox(
@@ -2515,20 +2514,22 @@ def build_ui():
                 return history or [], ""
             if not CHATBOT_AVAILABLE:
                 history = history or []
-                history.append({"role": "user", "content": message})
-                history.append({"role": "assistant", "content": "⚠️ Chatbot module not available."})
+                history.append((message, "⚠️ Chatbot module not available."))
                 return history, ""
             config = load_config()
             api_key = config.get("groq_api_key", "") or os.environ.get("NUTRISNAP_GROQ_KEY", "")
             if not api_key:
                 history = history or []
-                history.append({"role": "user", "content": message})
-                history.append({"role": "assistant", "content": "⚠️ Please configure your Groq API key in the **Settings** tab (under AI Assistant) or set the `NUTRISNAP_GROQ_KEY` environment variable.\n\nGet a free key at [console.groq.com](https://console.groq.com/keys)"})
+                history.append((message, "⚠️ Please configure your Groq API key in the **Settings** tab (under AI Assistant) or set the `NUTRISNAP_GROQ_KEY` environment variable.\n\nGet a free key at [console.groq.com](https://console.groq.com/keys)"))
                 return history, ""
             history = history or []
-            response = chatbot_module.chat(message, history, api_key, CSV_FILE)
-            history.append({"role": "user", "content": message})
-            history.append({"role": "assistant", "content": response})
+            # Convert tuple history to messages format for chatbot module
+            messages_history = []
+            for user_msg, assistant_msg in history:
+                messages_history.append({"role": "user", "content": user_msg})
+                messages_history.append({"role": "assistant", "content": assistant_msg})
+            response = chatbot_module.chat(message, messages_history, api_key, CSV_FILE)
+            history.append((message, response))
             return history, ""
 
         def on_refresh_dashboard():
