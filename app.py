@@ -703,7 +703,7 @@ def test_groq_connection(api_key):
         from groq import Groq
         client = Groq(api_key=api_key.strip())
         response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model=chatbot_module.GROQ_MODEL,
             messages=[{"role": "user", "content": "Hi"}],
             max_tokens=5,
         )
