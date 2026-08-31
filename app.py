@@ -46,6 +46,10 @@ CSV_FILE = "meal_log.csv"
 CSV_COLUMNS = ["Date", "Time", "Food", "Calories", "Protein (g)", "Carbs (g)", "Fat (g)", "Portion", "Confirmed"]
 CACHE_FILE = "nutrition_cache.json"
 CONFIG_FILE = "plategenie_config.json"
+REQUIRED_CONFIG_KEYS = {
+    "usda_api_key": "USDA FoodData Central",
+    "groq_api_key": "Groq AI Assistant",
+}
 CACHE_EXPIRY_DAYS = 7
 
 # YOLO model configuration (override via environment variables)
@@ -2830,8 +2834,8 @@ def start_fallback_server(port=7860):
                 self._handle_manual_log()
             elif path == "/api/settings":
                 self._handle_save_settings()
-            elif path == "/api/settings/test":
-                self._handle_test_api_key()
+            elif path == "/api/settings/test-key":
+                self._handle_test_key()
             elif path == "/api/cache/clear":
                 self._handle_clear_cache()
             elif path == "/api/log/save":
@@ -3046,10 +3050,11 @@ def start_fallback_server(port=7860):
         def _handle_get_settings(self):
             try:
                 cfg = load_config()
+                config_keys = {k: cfg.get(k, "") for k in REQUIRED_CONFIG_KEYS}
                 self._json_response({
-                    "usda_api_key": cfg.get("usda_api_key", ""),
                     "dark_mode": cfg.get("dark_mode", False),
                     "cache_size": get_cache_size(),
+                    "config_keys": config_keys,
                 })
             except Exception as e:
                 self._error(str(e), 500)
@@ -3061,6 +3066,8 @@ def start_fallback_server(port=7860):
                 cfg = load_config()
                 if "usda_api_key" in data:
                     cfg["usda_api_key"] = data["usda_api_key"].strip()
+                if "groq_api_key" in data:
+                    cfg["groq_api_key"] = data["groq_api_key"].strip()
                 if "dark_mode" in data:
                     cfg["dark_mode"] = bool(data["dark_mode"])
                 save_config(cfg)
@@ -3068,12 +3075,21 @@ def start_fallback_server(port=7860):
             except Exception as e:
                 self._error(str(e), 500)
 
-        # ── API: Test API Key ──
-        def _handle_test_api_key(self):
+        # ── API: Test Key (unified for all config keys) ──
+        def _handle_test_key(self):
             try:
                 data = self._read_json_body()
+                key_name = data.get("key", "").strip()
+                if key_name not in REQUIRED_CONFIG_KEYS:
+                    self._error(f"Unknown config key: {key_name}")
+                    return
                 api_key = data.get("api_key", "").strip()
-                result = test_usda_connection(api_key)
+                if key_name == "usda_api_key":
+                    result = test_usda_connection(api_key)
+                elif key_name == "groq_api_key":
+                    result = test_groq_connection(api_key)
+                else:
+                    result = "❌ No test function defined for this key."
                 success = "successful" in result.lower()
                 self._json_response({"success": success, "message": result})
             except Exception as e:
