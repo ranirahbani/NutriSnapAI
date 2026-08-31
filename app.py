@@ -2396,6 +2396,7 @@ def build_ui():
                 chatbot_display = gr.Chatbot(
                     label="Chat",
                     height=400,
+                    type="tuples",
                 )
                 with gr.Row():
                     chat_input = gr.Textbox(
