@@ -667,7 +667,7 @@ def load_config():
                 return json.load(f)
     except Exception:
         pass
-    return {"usda_api_key": "", "dark_mode": False}
+    return {"usda_api_key": "", "groq_api_key": "", "dark_mode": False}
 
 
 def save_config(config):
@@ -689,6 +689,28 @@ def test_usda_connection(api_key):
     if result:
         return f"Connection successful! Found: Apple - {result['calories']} kcal/100g"
     return "Connection failed. Check your API key and try again."
+
+
+def test_groq_connection(api_key):
+    """Test Groq API connection with a minimal chat completion."""
+    if not api_key or not api_key.strip():
+        return "⚠️ Please enter a Groq API key first."
+    try:
+        from groq import Groq
+        client = Groq(api_key=api_key.strip())
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=5,
+        )
+        if response and response.choices:
+            return "✅ Groq API connection successful!"
+        return "❌ Groq API returned an empty response."
+    except Exception as e:
+        err_msg = str(e)
+        if "authentication" in err_msg.lower() or "401" in err_msg:
+            return "❌ Invalid Groq API key. Please check your key at [console.groq.com](https://console.groq.com/keys)."
+        return f"❌ Groq API connection failed: {err_msg}"
 
 
 def export_csv_file():
@@ -2381,6 +2403,7 @@ def build_ui():
                             placeholder="Enter your Groq API key..."
                         )
                     with gr.Row():
+                        test_groq_btn = gr.Button("🔌 Test Connection")
                         save_groq_btn = gr.Button("💾 Save Groq Key")
                     groq_status = gr.Markdown("")
 
@@ -2505,12 +2528,16 @@ def build_ui():
             return "☀️ Light mode enabled."
 
         def on_save_groq_key(key):
-            config = load_config()
-            config["groq_api_key"] = key.strip()
-            save_config(config)
-            if key.strip():
-                return "✅ Groq API key saved!"
-            return "⚠️ Key cleared."
+            cfg = load_config()
+            cfg["groq_api_key"] = key.strip() if key else ""
+            if save_config(cfg):
+                if key.strip():
+                    return "✅ Groq API key saved!"
+                return "⚠️ Groq API key cleared."
+            return "❌ Failed to save Groq API key."
+
+        def on_test_groq_connection(key):
+            return test_groq_connection(key)
 
         def on_chat_send(message, history):
             if not message or not message.strip():
@@ -2676,6 +2703,7 @@ def build_ui():
             js="(function(val) { if (val) { document.body.classList.add('dark-mode'); } else { document.body.classList.remove('dark-mode'); } })"
         )
         save_groq_btn.click(fn=on_save_groq_key, inputs=[groq_key_input], outputs=[groq_status])
+        test_groq_btn.click(fn=on_test_groq_connection, inputs=[groq_key_input], outputs=[groq_status])
         chat_send_btn.click(fn=on_chat_send, inputs=[chat_input, chatbot_display], outputs=[chatbot_display, chat_input])
         chat_input.submit(fn=on_chat_send, inputs=[chat_input, chatbot_display], outputs=[chatbot_display, chat_input])
         chat_clear_btn.click(fn=lambda: ([], ""), outputs=[chatbot_display, chat_input])
