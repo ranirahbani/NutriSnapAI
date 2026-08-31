@@ -30,7 +30,7 @@ DISCLAIMER_BANNER = (
     "decisions made based on this chatbot's responses."
 )
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "openai/gpt-oss-120b"
 MAX_HISTORY_TURNS = 10
 MAX_OUTPUT_TOKENS = 1024
 CACHE_TTL = 60  # seconds
